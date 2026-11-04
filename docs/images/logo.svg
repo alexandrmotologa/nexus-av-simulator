@@ -1,0 +1,136 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Background Squircle Gradient -->
+    <linearGradient id="sqGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="100%" stop-color="#f8fafc" />
+    </linearGradient>
+
+    <!-- Falcon Obsidian Armor Gradient -->
+    <linearGradient id="falconArmorDark" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b" />
+      <stop offset="100%" stop-color="#090d16" />
+    </linearGradient>
+
+    <!-- Falcon Mid Slate Gradient -->
+    <linearGradient id="falconArmorMid" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#334155" />
+      <stop offset="100%" stop-color="#1e293b" />
+    </linearGradient>
+
+    <!-- Cyan Optical Eye Glow -->
+    <linearGradient id="cyanOptic" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0284c7" />
+      <stop offset="50%" stop-color="#06b6d4" />
+      <stop offset="100%" stop-color="#38bdf8" />
+    </linearGradient>
+
+    <!-- Amber Beak Gradient -->
+    <linearGradient id="amberBeak" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24" />
+      <stop offset="100%" stop-color="#d97706" />
+    </linearGradient>
+
+    <!-- Subtle Drop Shadow for Falcon Silhouette -->
+    <filter id="falconShadow" x="-10%" y="-10%" width="120%" height="125%" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="16" stdDeviation="20" flood-color="#0f172a" flood-opacity="0.14" />
+    </filter>
+  </defs>
+
+  <!-- 1. Luxury Squircle Container -->
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#sqGrad)" stroke="rgba(226, 232, 240, 0.8)" stroke-width="2" />
+
+  <!-- 2. The Falcon Silhouette & Low-Poly Geometry -->
+  <g filter="url(#falconShadow)" transform="translate(0, 8)">
+    <!-- Base Contiguous Solid Silhouette to guarantee watertight rendering -->
+    <path d="M 256,64
+             C 320,64 366,104 388,160
+             C 402,196 404,242 400,284
+             L 424,324 L 400,344 L 408,392 L 368,432 L 256,448 L 144,432 L 104,392 L 112,344 L 88,324 L 112,284
+             C 108,242 110,196 124,160
+             C 146,104 192,64 256,64 Z"
+          fill="#090d16" />
+
+    <!-- Cranial Crest & Brow Facets (Top Head Structure) -->
+    <polygon points="256,64 212,112 256,128" fill="#334155" />
+    <polygon points="256,64 256,128 300,112" fill="#475569" />
+    <polygon points="212,112 172,132 216,152" fill="#1e293b" />
+    <polygon points="300,112 296,152 340,132" fill="#334155" />
+    <polygon points="212,112 216,152 256,128" fill="#1e293b" />
+    <polygon points="256,128 296,152 300,112" fill="#334155" />
+
+    <!-- Forehead & Center Brow Bridge -->
+    <polygon points="256,128 216,152 236,192 256,180" fill="#475569" />
+    <polygon points="256,128 256,180 276,192 296,152" fill="#64748b" />
+
+    <!-- Crown Lateral Temples -->
+    <polygon points="172,132 136,176 180,188 216,152" fill="#0f172a" />
+    <polygon points="340,132 296,152 332,188 376,176" fill="#1e293b" />
+
+    <!-- Supraorbital Eye Ridge (Predatory Cant Eyebrows) -->
+    <polygon points="216,152 180,188 216,198 236,192" fill="#090d16" />
+    <polygon points="296,152 276,192 296,198 332,188" fill="#1e293b" />
+
+    <!-- Left & Right Eyes (Sharp Almond Predator Optics) -->
+    <!-- Left Eye Socket & Cyan Core -->
+    <polygon points="186,192 214,196 208,212 180,202" fill="#0284c7" />
+    <polygon points="190,195 210,198 206,209 184,203" fill="#38bdf8" />
+    <circle cx="199" cy="202" r="3.2" fill="#ffffff" />
+
+    <!-- Right Eye Socket & Cyan Core -->
+    <polygon points="326,192 332,202 304,212 298,196" fill="#0284c7" />
+    <polygon points="322,195 328,203 306,209 302,198" fill="#38bdf8" />
+    <circle cx="313" cy="202" r="3.2" fill="#ffffff" />
+
+    <!-- Aerodynamic Malar Stripes / Peregrine Falcon Helmet Sides -->
+    <polygon points="180,188 136,176 132,236 172,228 180,202" fill="#0f172a" />
+    <polygon points="332,188 332,202 340,228 380,236 376,176" fill="#1e293b" />
+
+    <polygon points="172,228 132,236 140,292 180,272" fill="#1e293b" />
+    <polygon points="340,228 332,272 372,292 380,236" fill="#334155" />
+
+    <polygon points="180,202 208,212 200,248 172,228" fill="#090d16" />
+    <polygon points="332,202 340,228 312,248 304,212" fill="#1e293b" />
+
+    <!-- Upper Beak Bridge (Culmen) -->
+    <polygon points="256,180 236,192 242,236 256,244" fill="#64748b" />
+    <polygon points="256,180 256,244 270,236 276,192" fill="#94a3b8" />
+
+    <!-- Premaxilla / Cere (Nasal base) -->
+    <polygon points="242,236 216,252 240,272 256,268 256,244" fill="#d97706" />
+    <polygon points="256,244 256,268 272,272 296,252 270,236" fill="#f59e0b" />
+
+    <!-- Curved Predator Beak Tip (Hooked Tomium) -->
+    <polygon points="256,268 240,272 248,312 256,336" fill="#b45309" />
+    <polygon points="256,268 256,336 264,312 272,272" fill="#fbbf24" />
+    <!-- Beak Dark Cut Line -->
+    <polygon points="248,312 256,336 256,316" fill="#78350f" />
+
+    <!-- Whisker & Throat Cheek Facets -->
+    <polygon points="216,252 200,248 180,272 208,300 240,272" fill="#334155" />
+    <polygon points="296,252 272,272 304,300 332,272 312,248" fill="#475569" />
+
+    <!-- Chin & Throat Feathers -->
+    <polygon points="240,272 248,312 256,336 256,356 228,340 208,300" fill="#1e293b" />
+    <polygon points="272,272 304,300 284,340 256,356 256,336 264,312" fill="#334155" />
+
+    <!-- Chest Armor Plates (Aerodynamic Vector Geometry) -->
+    <polygon points="256,356 228,340 188,368 220,404 256,416" fill="#0f172a" />
+    <polygon points="256,356 256,416 292,404 324,368 284,340" fill="#1e293b" />
+
+    <!-- Breastplate Core Shield -->
+    <polygon points="256,416 220,404 256,448" fill="#090d16" />
+    <polygon points="256,416 256,448 292,404" fill="#1e293b" />
+
+    <!-- Outer Flanking Wing Fold Feathers -->
+    <polygon points="180,272 140,292 136,348 188,368 208,300" fill="#090d16" />
+    <polygon points="332,272 304,300 324,368 376,348 372,292" fill="#1e293b" />
+
+    <polygon points="188,368 136,348 132,408 176,428 220,404" fill="#0f172a" />
+    <polygon points="324,368 292,404 336,428 380,408 376,348" fill="#1e293b" />
+
+    <!-- Flank Wing Trim Tips -->
+    <polygon points="132,408 176,428 144,432" fill="#090d16" />
+    <polygon points="380,408 368,432 336,428" fill="#1e293b" />
+  </g>
+</svg>

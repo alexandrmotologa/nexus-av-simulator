@@ -1,109 +1,188 @@
-# Nexus AV Simulator
+<h1 align="center">
+  <img src="docs/images/logo.png" alt="Nexus AV Simulator" width="160" height="160" /><br>
+  Nexus AV Simulator
+</h1>
 
-Nexus AV Simulator is an autonomous vehicle research and simulation platform built with TypeScript, React 19, HTML5 Canvas, and Tailwind CSS.
+<p align="center">
+  <b>Multi-paradigm autonomous vehicle simulation platform in TypeScript and 2D canvas.</b><br>
+  Simulates kinematic bicycle vehicle dynamics, 360-degree LiDAR perception, intelligent multi-agent traffic, neuroevolution, and mistake-driven reinforcement learning.
+</p>
 
-It moves beyond simplified straight line toy models by implementing genuine autonomous vehicle engineering concepts: procedural spline road networks, kinematic bicycle dynamics, multi-agent microscopic traffic, multi-modal perception, and multi-paradigm autonomous control systems.
+<p align="center">
+  <a href="https://github.com/alexandrmotologa/nexus-av-simulator"><img src="https://img.shields.io/badge/GitHub-Repo-1e293b?style=flat&logo=github" alt="Repo"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat" alt="License"></a>
+  <img src="https://img.shields.io/badge/TypeScript-5.9-3178c6?style=flat&logo=typescript" alt="TypeScript">
+  <img src="https://img.shields.io/badge/React-19-61dafb?style=flat&logo=react" alt="React 19">
+  <img src="https://img.shields.io/badge/Vite-6.2-646cff?style=flat&logo=vite" alt="Vite">
+  <img src="https://img.shields.io/badge/Physics-Kinematic_Bicycle-emerald?style=flat" alt="Physics">
+</p>
 
-![Nexus AV Dashboard](docs/images/dashboard.png)
+<p align="center">
+  <img src="docs/images/nexus_av_demo.gif" alt="Nexus AV Simulator Execution Demo" width="800" />
+</p>
 
-## Core Capabilities
+---
 
-### 1. Curvilinear Road Geometry & Coordinate Systems
-* **Catmull-Rom & Bezier Splines**: Multi-lane tracks with analytical arc-length reparameterization.
-* **Frenet Frame Transformation**: Continuous mapping between Cartesian `(x, y)` and Frenet `(s, d)` coordinates (longitudinal track distance and lateral lane offset).
-* **Presets**: Monza Apex GP, Neo Tokyo Expressway, Alpine Slalom, and an Infinite Highway benchmark.
+## Overview
 
-### 2. Vehicle Dynamics
-* **Kinematic Bicycle Model**: Real Ackermann steering geometry, wheelbase dynamics, and steer rate limits.
-* **Tire Adhesion & Slip**: Calculates lateral acceleration and detects loss of traction during aggressive cornering.
-* **Separating Axis Theorem (SAT)**: Exact collision detection between rotated vehicle bounding polygons and track curbs.
+Nexus AV Simulator is an engineering platform designed to study autonomous vehicle motion planning, real-time sensor perception, and multi-paradigm AI driving controllers directly in browser environments.
 
-### 3. Perception Stack
-* **360 Degree LiDAR**: Multi-beam raycasting with distance normalization and obstacle classification (road curbs vs dynamic vehicles).
-* **Doppler Radar**: Leading vehicle detection providing relative distance and relative velocity ($\Delta v$) for cruise control.
+The simulator implements numerical vehicle dynamics, geometric collision checks using the Separating Axis Theorem (SAT), 360-degree LiDAR raycasting, Doppler radar, and surrounding traffic governed by car-following and lane-changing models.
 
-### 4. Microscopic Traffic Simulation
-* **Intelligent Driver Model (IDM)**: Realistic car-following dynamics maintaining time headway and comfortable deceleration gaps.
-* **MOBIL Model**: Polite lane-changing decision criteria balancing ego advantage against follower disruption.
+---
 
-### 5. Multi-Paradigm Autonomous Brains
-* **Self-Learning RL (Deep Q-Learning with Mistake Replay)**: A neural agent that calculates Temporal Difference error and backpropagates gradients in real time. It utilizes a prioritized memory buffer that samples past collisions, spins, and near-misses on every frame so it specifically learns to avoid repeating past mistakes.
-* **Neuroevolution Pilot (GA)**: Multi-layer perceptron evolved across generations with elitism, uniform crossover, and adaptive Gaussian mutation.
-* **Stanley / Pure Pursuit Controller**: Classical robotics baseline combining lookahead path curvature tracking with adaptive cruise control.
-* **Manual Driver Mode**: Direct keyboard control (WASD / Arrows) to test how autonomous agents react to human driving.
+## Visual Previews
 
-![Mistake Learning RL Agent](docs/images/mistake_learning.png)
+<div align="center">
+  <img src="docs/images/nexus_av_telemetry.png" alt="Telemetry View" width="800" />
+  <p><i>Real-time cockpit telemetry with 360-degree LiDAR perception beams and active circuit radar.</i></p>
+</div>
 
-![Stanley Robot Driving](docs/images/stanley_gp.png)
+<div align="center">
+  <img src="docs/images/nexus_av_night_mode.png" alt="Cyberpunk Night Atmosphere" width="800" />
+  <p><i>Cyberpunk Night atmosphere: pitch-dark tarmac, neon cyan rumble strips, and generational fitness curve.</i></p>
+</div>
 
-![Alpine Slalom Cornering](docs/images/slalom.png)
+<div align="center">
+  <img src="docs/images/nexus_av_wet_sandbox.png" alt="Wet Weather and Sandbox Obstacles" width="800" />
+  <p><i>Wet weather conditions with reduced tire grip (4.5 m/s²), diagonal rain streaks, and interactive traffic cones.</i></p>
+</div>
 
-## Architecture Overview
+<div align="center">
+  <img src="docs/images/nexus_av_rl_dual.png" alt="Dual Inspection View" width="800" />
+  <p><i>Dual inspector view: Mistake-Learning RL HUD alongside real-time neural synapse activations.</i></p>
+</div>
+
+---
+
+## Core Systems
+
+### 1. Vehicle Dynamics Engine
+The simulator models vehicle mechanics through a continuous-time Kinematic Bicycle Model with Ackermann geometry:
+* **Position and Heading**: Updated via Runge-Kutta numerical integration.
+* **Slip Angle**: Computed using front/rear wheel base distances ($l_f = 1.3\text{ m}$, $l_r = 1.5\text{ m}$):
+  $$\beta = \arctan\left(\frac{l_r}{l_f + l_r} \tan(\delta)\right)$$
+* **Lateral Grip**: Clamped by friction limits ($a_{\text{lat}} = v^2 \cdot \kappa \le \mu g$).
+* **Transmission**: Forward acceleration up to 160 km/h and dedicated reverse gear up to 50 km/h with directional braking transition.
+
+### 2. 360-Degree Sensor Suite
+* **LiDAR Sensor**: Casts up to 24 planar rays across 360 degrees. Ray intersections are evaluated against track boundaries, NPC traffic hulls, and road obstacles using optimized ray-circle and ray-segment tests.
+* **Doppler Radar**: Forward long-range sensor tracking distance, azimuth, and relative approach velocity ($\Delta v$) of leading obstacles up to 70 meters.
+
+### 3. Multi-Agent Intelligent Traffic
+Surrounding civilian traffic operates autonomously through coupled macroscopic and microscopic models:
+* **IDM (Intelligent Driver Model)**: Calculates longitudinal acceleration based on desired velocity, safe time headway, and minimum spacing.
+* **MOBIL (Minimizing Overall Braking Induced by Lane Changes)**: Evaluates politeness factors and acceleration incentives before executing lane shifts.
+* **Active Hazard Avoidance**: Traffic vehicles detect stopped wrecks and road cones, calculating lane offsets to bypass obstructions safely.
+
+---
+
+## Driving AI Paradigms
 
 ```
-src/
-├── core/
-│   ├── math/
-│   │   ├── Vector2D.ts         # Vector operations, projections, rotations
-│   │   ├── Spline.ts           # Arc-length parameterised Catmull-Rom splines
-│   │   ├── Frenet.ts           # Cartesian to Frenet coordinate frame
-│   │   └── Collision.ts        # SAT polygon collision and raycasting
-│   ├── physics/
-│   │   ├── VehicleModel.ts     # Kinematic bicycle model and Ackermann steering
-│   │   └── VehicleState.ts     # Vehicle state representation and limits
-│   ├── sensors/
-│   │   ├── LidarSensor.ts      # Multi-beam raycaster with obstacle classification
-│   │   └── RadarSensor.ts      # Forward Doppler radar tracking leading cars
-│   ├── traffic/
-│   │   ├── IDM.ts              # Intelligent Driver Model car following
-│   │   ├── MOBIL.ts            # Polite lane changing criteria
-│   │   └── TrafficManager.ts   # NPC fleet orchestrator
-│   ├── ai/
-│   │   ├── BackpropNetwork.ts  # Densely connected network with momentum backprop
-│   │   ├── DeepQLearning.ts    # Deep Q-Network with Prioritized Mistake Memory
-│   │   ├── NeuralNetwork.ts    # Float32Array MLP with live layer introspection
-│   │   ├── GeneticAlgorithm.ts # Elitist neuroevolution engine
-│   │   └── ClassicController.ts# Pure Pursuit + ACC controller
-│   └── engine/
-│       └── Simulation.ts       # Unified physics stepper and headless training loop
-├── renderer/
-│   ├── CanvasRenderer.ts       # High-DPI 2D canvas drawing engine
-│   └── Camera.ts               # Smooth target-tracking camera with zoom
-└── components/
-    ├── Cockpit.tsx             # Real-time telemetry HUD (speed, steer angle, G-meter)
-    ├── BrainVisualizer.tsx     # Live animated neural synapse monitor
-    ├── MistakeLearningHUD.tsx  # Q-values, mistake memory, TD loss monitor
-    └── ControlPanel.tsx        # Time scale, track preset, and traffic density controls
+┌────────────────────────────────────────────────────────────────────────┐
+│                        NEXUS AV PILOT MODES                            │
+├────────────────────┬────────────────────┬──────────────────────────────┤
+│ 1. Neuroevolution  │ 2. Deep RL Agent   │ 3. Classic Stanley Robot     │
+│    (Genetic Alg)   │    (Mistake DQN)   │    (Path Tracking + ACC)     │
+├────────────────────┼────────────────────┼──────────────────────────────┤
+│ • Population of 35 │ • 24 input features│ • Cross-track error ($e_y$)  │
+│ • Elitism pool     │ • 7 discrete moves │ • Yaw error ($\theta_e$)     │
+│ • Gaussian weights │ • Prioritized replay│ • Dynamic velocity profile  │
+│ • Fitness metrics  │ • Persistent store │ • AEB safety fallback        │
+└────────────────────┴────────────────────┴──────────────────────────────┘
 ```
 
-## Getting Started
+### Neuroevolution (Genetic Algorithm)
+* Evaluates a parallel fleet of 35 autonomous agents simultaneously.
+* Inputs include normalized LiDAR range vectors, vehicle velocity, and track curvature.
+* Neural weights evolve across generations through top 10% elitism, tournament crossover, and Gaussian mutation.
+* Fitness rewards distance traveled, speed consistency, and clean overtakes, penalizing barrier strikes.
+
+### Deep Q-Learning with Prioritized Mistake Memory
+* Uses a 4-layer backpropagation neural network (topology: 24 inputs, 32 hidden, 24 hidden, 7 output actions).
+* Separates experience into a general replay buffer and a prioritized mistake buffer. Transitions resulting in collisions or off-road excursions are sampled with 65% priority during SGD training.
+* Saves learned weights to `localStorage` automatically, ensuring that lessons persist across browser reloads.
+
+### Classical Stanley Path Tracker
+* Follows track centerlines via the Stanley steering control law:
+  $$\delta(t) = \theta_e(t) + \arctan\left(\frac{k \cdot e_y(t)}{v(t) + \epsilon}\right)$$
+* Couples lateral guidance with Adaptive Cruise Control (ACC) and Autonomous Emergency Braking (AEB).
+
+### Manual Driver
+* Direct human control through keyboard inputs (`W` throttle, `S` brake/reverse, `A`/`D` steering, `R` reset).
+
+---
+
+## Interactive Features
+
+* **Circuit Radar HUD**: Mini-map tracking ego position, direction vectors, and surrounding traffic in real time. Click anywhere on the radar to pan the viewport.
+* **Free Pan Camera and Vehicle Focus**: Drag canvas to freely inspect the track. Click directly on any car to lock focus onto it. The pulsating Recenter button restores ego tracking.
+* **Interactive Sandbox**: Place reflective traffic cones directly on the asphalt with mouse clicks. Vehicles detect obstacles via LiDAR and steer around them.
+* **Weather and Surface Grip**:
+  * *Dry*: Standard track grip (100%, 8.5 m/s² lateral threshold).
+  * *Wet*: Reduced friction (4.5 m/s²), longer braking distances, and animated rain streaks.
+  * *Night*: Dark tarmac with high-contrast neon cyan rumble strips and headlight illumination.
+* **Brain Model Hub**: Export and import complete neural models (`.json`) for both neuroevolution champions and deep Q-learning policy networks.
+
+---
+
+## Quick Start
 
 ### Prerequisites
-* Node.js 18+ (tested on Node v24)
-* npm 9+
+* Node.js 18.0 or higher
+* npm or pnpm
 
-### Installation & Run
+### Installation
 
 ```bash
-# Clone or navigate to the project directory
+# Clone the repository
+git clone https://github.com/alexandrmotologa/nexus-av-simulator.git
 cd nexus-av-simulator
 
 # Install dependencies
 npm install
 
-# Start development server
+# Start local development server
 npm run dev
 ```
 
-Open `http://localhost:5173` in your browser.
+Open [http://localhost:5173](http://localhost:5173) in your web browser.
 
-### Key Controls
-* **Space**: Pause / Resume simulation
-* **W / Up**: Throttle (Manual Mode)
-* **S / Down**: Brake / Reverse (Manual Mode)
-* **A / D / Left / Right**: Steer Left / Right (Manual Mode)
-* **Mouse Scroll**: Zoom camera in / out
+### Production Build
+
+```bash
+# Typecheck and compile bundle
+npm run build
+
+# Preview production build locally
+npm run preview
+```
+
+---
+
+## Keyboard Controls
+
+| Key | Action |
+| :--- | :--- |
+| `W` / `Up Arrow` | Accelerate / Drive forward |
+| `S` / `Down Arrow` | Brake (forward) / Accelerate in Reverse |
+| `A` / `Left Arrow` | Steer Left |
+| `D` / `Right Arrow` | Steer Right |
+| `Space` | Pause / Resume simulation |
+| `R` | Reset vehicle position |
+| `Mouse Drag` | Free pan viewport |
+| `Mouse Wheel` | Zoom in / Zoom out |
+
+---
+
+## Architecture and Documentation
+
+* [System Architecture](docs/ARCHITECTURE.md): Mathematical formulations, coordinate frames, collision physics, and neural network structures.
+* [API and Telemetry Spec](docs/API_AND_TELEMETRY.md): Data structures for telemetry streams, brain export schemas, and obstacle protocols.
+
+---
 
 ## License
 
-MIT
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
