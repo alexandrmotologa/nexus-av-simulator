@@ -41,13 +41,19 @@ export class Camera {
   public follow(targetPos: Vector2D, dt: number): void {
     if (!this.isLockedToVehicle) {
       // Free floating / user panned
-      this.position = this.position.lerp(this.target, Math.min(1.0, 0.2 * (dt * 60)));
-      this.zoom += (this.targetZoom - this.zoom) * Math.min(1.0, 0.1 * (dt * 60));
+      const panAlpha = 1.0 - Math.exp(-12.0 * dt);
+      this.position = this.position.lerp(this.target, Math.min(1.0, panAlpha));
+      const zoomAlpha = 1.0 - Math.exp(-8.0 * dt);
+      this.zoom += (this.targetZoom - this.zoom) * Math.min(1.0, zoomAlpha);
       return;
     }
     this.target = targetPos.clone();
-    this.position = this.position.lerp(this.target, Math.min(1.0, this.lerpFactor * (dt * 60)));
-    this.zoom += (this.targetZoom - this.zoom) * Math.min(1.0, 0.1 * (dt * 60));
+    // High-responsiveness exponential damping: zero micro-jitter, silky 60/120/144fps lock
+    const followRate = 22.0;
+    const alpha = 1.0 - Math.exp(-followRate * dt);
+    this.position = this.position.lerp(this.target, Math.min(1.0, alpha));
+    const zoomAlpha = 1.0 - Math.exp(-8.0 * dt);
+    this.zoom += (this.targetZoom - this.zoom) * Math.min(1.0, zoomAlpha);
   }
 
   public panBy(deltaScreenX: number, deltaScreenY: number): void {

@@ -423,16 +423,19 @@ export class GeneticEngine {
       agent.stats.score = agent.fitness;
     }
 
-    // Identify current best performer
-    let topFitness = -Infinity;
-    let topAgent = this.population[0];
+    // Identify current best performer with hysteresis to prevent camera target oscillations
+    let topAgent = this.bestAgent && this.bestAgent.isAlive ? this.bestAgent : null;
+    let topFitness = topAgent ? topAgent.fitness : -Infinity;
+
     for (const agent of this.population) {
-      if (agent.fitness > topFitness) {
+      if (!agent.isAlive) continue;
+      // Require challenger to exceed current leader by a small margin (+3.0) to prevent jittery focus switching
+      if (!topAgent || agent.fitness > topFitness + 3.0) {
         topFitness = agent.fitness;
         topAgent = agent;
       }
     }
-    this.bestAgent = topAgent;
+    this.bestAgent = topAgent || this.population[0];
 
     this.generationFrames++;
 

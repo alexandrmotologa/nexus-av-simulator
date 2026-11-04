@@ -4,6 +4,7 @@ import { Track } from '../world/Track';
 import { IntelligentDriverModel, IDMParameters } from './IDM';
 import { MOBILLaneChanger } from './MOBIL';
 import { RoadObstacle } from '../world/Obstacle';
+import { Collision } from '../math/Collision';
 
 export interface TrafficVehicleAgent {
   vehicle: VehicleModel;
@@ -293,33 +294,33 @@ export class TrafficManager {
 
   /**
    * Enforces physical rigid-body separation so vehicles never overlap or phase through each other.
+   * Uses SAT polygon collision to strictly avoid phantom pushes between cars in adjacent lanes!
    */
   private resolvePhysicalOverlaps(vehicles: VehicleModel[]): void {
-    const minDistance = 4.2; // Minimum vehicle bounding circle separation
-
     for (let i = 0; i < vehicles.length; i++) {
+      const vA = vehicles[i];
       for (let j = i + 1; j < vehicles.length; j++) {
-        const vA = vehicles[i];
         const vB = vehicles[j];
 
         const delta = vA.state.position.sub(vB.state.position);
-        const dist = delta.magnitude();
+        const distSq = delta.magnitudeSq();
 
-        if (dist < minDistance && dist > 1e-4) {
-          // Overlap detected! Push both vehicles apart along separation normal
-          const overlap = minDistance - dist;
+        // Broad-phase: vehicles have a bounding radius of ~2.5m, so 25.0m² max check threshold
+        if (distSq > 24.0) continue;
+
+        // Narrow-phase SAT check: only nudge if the actual rectangular bodies physically overlap!
+        const isColliding = Collision.checkPolygonCollision(vA.state.polygon, vB.state.polygon);
+        if (!isColliding) continue;
+
+        const dist = Math.sqrt(distSq);
+        if (dist > 1e-4) {
           const separationNormal = delta.scale(1 / dist);
-          const push = separationNormal.scale(overlap * 0.5);
+          const push = separationNormal.scale(0.06);
 
           vA.state.position = vA.state.position.add(push);
           vB.state.position = vB.state.position.sub(push);
           vA.updatePolygon();
           vB.updatePolygon();
-
-          // Damped velocity exchange (inelastic bump)
-          const avgSpeed = (vA.state.speed + vB.state.speed) * 0.5 * 0.85;
-          vA.state.speed = avgSpeed;
-          vB.state.speed = avgSpeed;
         }
       }
     }

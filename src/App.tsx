@@ -101,8 +101,12 @@ export function App() {
     // Main Simulation & Render Loop
     let animId: number;
     let lastUiUpdate = 0;
+    let lastFrameTime = performance.now();
 
     const loop = (timestamp: number) => {
+      const realDt = Math.min(0.05, Math.max(0.001, (timestamp - lastFrameTime) / 1000));
+      lastFrameTime = timestamp;
+
       engine.update(timestamp);
 
       // Determine default leader vehicle
@@ -135,7 +139,7 @@ export function App() {
       }
 
       if (activeFollow) {
-        renderer.camera.follow(activeFollow.state.position, 0.016);
+        renderer.camera.follow(activeFollow.state.position, realDt);
       }
 
       renderer.render(
