@@ -52,7 +52,8 @@ export class GeneticEngine {
   public randomInjectionRate: number = 0.05;
 
   public generationFrames: number = 0;
-  public maxGenerationFrames: number = 850; // ~16-18s per generation to prevent hangs
+  public maxGenerationFrames: number = 3600; // Base 60s generation window (dynamically extended while driving)
+  public lastEvolveReason: 'ALL_CRASHED' | 'LAP_COMPLETED' | 'TIMEOUT' | 'STALLED' = 'ALL_CRASHED';
 
   private track: Track;
   private governor: SafetyGovernor = new SafetyGovernor();
@@ -110,9 +111,10 @@ export class GeneticEngine {
   }
 
   public getGridStartPosition(agentIndex: number): { pos: Vector2D; heading: number; lane: number; s: number } {
-    const laneCount = Math.max(1, this.track.laneCount);
-    const lane = agentIndex % laneCount;
-    const row = Math.floor(agentIndex / laneCount);
+    const laneStart = this.track.isBidirectional ? this.track.oncomingLaneCount : 0;
+    const forwardLaneCount = Math.max(1, this.track.laneCount - laneStart);
+    const lane = laneStart + (agentIndex % forwardLaneCount);
+    const row = Math.floor(agentIndex / forwardLaneCount);
     // Base distance s = 14m for pole position, staggered in clean starting grid boxes by 6m
     const s = 14.0 + row * 6.0;
     const d = this.track.getLaneCenterD(lane);
@@ -174,8 +176,11 @@ export class GeneticEngine {
   }
 
   public getStartPosition(): { pos: Vector2D; heading: number } {
+    const laneStart = this.track.isBidirectional ? this.track.oncomingLaneCount : 0;
+    const forwardLaneCount = Math.max(1, this.track.laneCount - laneStart);
+    const middleForwardLane = laneStart + Math.floor(forwardLaneCount / 2);
     const s = 14.0;
-    const d = this.track.getLaneCenterD(1); // Middle lane
+    const d = this.track.getLaneCenterD(middleForwardLane);
     const cartesian = this.track.frenet.frenetToCartesian(s, d);
     return {
       pos: cartesian.position,
@@ -431,8 +436,27 @@ export class GeneticEngine {
 
     this.generationFrames++;
 
-    // Trigger next generation if all agents have crashed OR generation timer expired
-    if (aliveCount === 0 || this.generationFrames >= this.maxGenerationFrames) {
+    // Dynamic generation timeout: If the leader is cruising cleanly forward, give it full room to drive
+    let dynamicTimeout = this.maxGenerationFrames;
+    if (topAgent && topAgent.isAlive && topAgent.vehicle.state.speed > 5.0) {
+      dynamicTimeout = 7200; // Allow up to 2 minutes of continuous high-speed driving
+    }
+
+    // Check lap completion
+    const completedLap =
+      this.track.closed &&
+      this.track.spline.totalLength > 100 &&
+      topAgent &&
+      topAgent.stats.distance >= this.track.spline.totalLength;
+
+    if (completedLap) {
+      this.lastEvolveReason = 'LAP_COMPLETED';
+      this.evolveNextGeneration();
+    } else if (aliveCount === 0) {
+      this.lastEvolveReason = 'ALL_CRASHED';
+      this.evolveNextGeneration();
+    } else if (this.generationFrames >= dynamicTimeout) {
+      this.lastEvolveReason = 'TIMEOUT';
       this.evolveNextGeneration();
     }
   }

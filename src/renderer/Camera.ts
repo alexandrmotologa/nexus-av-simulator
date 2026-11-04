@@ -3,8 +3,10 @@ import { Vector2D } from '../core/math/Vector2D';
 export class Camera {
   public position: Vector2D = new Vector2D(0, 0);
   public target: Vector2D = new Vector2D(0, 0);
-  public zoom: number = 2.4; // Pixels per meter
-  public targetZoom: number = 2.4;
+  public zoom: number = 4.5; // Default close-up view (pixels per meter)
+  public targetZoom: number = 4.5;
+  public minZoom: number = 0.4;
+  public maxZoom: number = 28.0; // High-detail close zoom
   public lerpFactor: number = 0.08;
   public width: number = 800;
   public height: number = 600;
@@ -13,6 +15,22 @@ export class Camera {
   constructor(width: number, height: number) {
     this.width = width;
     this.height = height;
+  }
+
+  public zoomBy(factor: number): void {
+    this.targetZoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.targetZoom * factor));
+  }
+
+  public zoomIn(): void {
+    this.zoomBy(1.3);
+  }
+
+  public zoomOut(): void {
+    this.zoomBy(0.77);
+  }
+
+  public resetZoom(): void {
+    this.targetZoom = 4.5;
   }
 
   public resize(width: number, height: number): void {

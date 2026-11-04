@@ -147,6 +147,15 @@ export class SafetyGovernor {
       finalSteer = laneCenteringSteer * 0.65 + rawControl.steer * 0.35;
     }
 
+    // Traffic Rule ADAS: Double Solid Yellow Centerline Protection (prevent straying into oncoming flow)
+    if (track.isBidirectional && !track.isOncomingLane(assignedLaneIndex)) {
+      const medianD = track.totalWidth * 0.5 - track.oncomingLaneCount * track.laneWidth;
+      if (frenet.d > medianD - 0.9) {
+        // Steer rightward away from oncoming traffic
+        finalSteer = Math.max(finalSteer, 0.5);
+      }
+    }
+
     return {
       throttle: Math.max(0, Math.min(1, finalThrottle)),
       brake: Math.max(0, Math.min(1, finalBrake)),
@@ -158,6 +167,7 @@ export class SafetyGovernor {
    * Asserts whether a lane change into targetLaneIndex is legally and physically safe:
    * 1. No lead vehicle in target lane closer than safeLaneChangeGapFront
    * 2. No rear trailing vehicle approaching from behind (avoids cutting off other cars)
+   * 3. Cannot cross double solid yellow line into oncoming traffic
    */
   public isLaneChangeSafe(
     egoVehicle: VehicleModel,
@@ -172,6 +182,16 @@ export class SafetyGovernor {
       egoVehicle.state.heading,
       egoVehicle.state.speed
     );
+
+    // Rule 1: Never cross DOUBLE_SOLID_YELLOW into oncoming traffic!
+    const currentLane = track.getLaneIndex(egoFrenet.d);
+    if (track.isBidirectional) {
+      const isCurrentlyForward = !track.isOncomingLane(currentLane);
+      const isTargetOncoming = track.isOncomingLane(targetLaneIndex);
+      if (isCurrentlyForward && isTargetOncoming) return false;
+      if (!isCurrentlyForward && !isTargetOncoming) return false;
+    }
+
     const targetLaneD = track.getLaneCenterD(targetLaneIndex);
 
     for (const other of allVehicles) {

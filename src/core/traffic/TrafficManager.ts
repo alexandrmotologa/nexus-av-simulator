@@ -41,10 +41,12 @@ export class TrafficManager {
     for (let i = 0; i < count; i++) {
       const s = ((i + 1) * spacing + (Math.random() - 0.5) * 10) % totalLength;
       const laneIdx = i % this.track.laneCount;
+      const isOncoming = this.track.isOncomingLane(laneIdx);
       const targetD = this.track.getLaneCenterD(laneIdx);
 
       const cartesian = this.track.frenet.frenetToCartesian(s, targetD);
-      const speedVariation = 20.0 + (i % 3) * 4.0; // 20 - 28 m/s (~72 - 100 km/h)
+      const speedVariation = 19.0 + (i % 3) * 3.5; // 19 - 26 m/s (~68 - 94 km/h)
+      const heading = isOncoming ? (cartesian.heading + Math.PI) : cartesian.heading;
 
       const vehicle = new VehicleModel(
         {
@@ -56,7 +58,7 @@ export class TrafficManager {
           width: 2.0,
         },
         cartesian.position,
-        cartesian.heading
+        heading
       );
       vehicle.state.speed = speedVariation;
 
@@ -89,13 +91,18 @@ export class TrafficManager {
       const egoFrenet = this.track.frenet.cartesianToFrenet(egoVehicle.state.position, egoVehicle.state.heading, egoVehicle.state.speed);
       baseS = egoFrenet.s;
     }
-    const spawnS = (baseS + 80 + Math.random() * 60) % totalLength;
     const laneIdx = Math.floor(Math.random() * this.track.laneCount);
+    const isOncoming = this.track.isOncomingLane(laneIdx);
     const targetD = this.track.getLaneCenterD(laneIdx);
-    const cartesian = this.track.frenet.frenetToCartesian(spawnS, targetD);
 
-    agent.vehicle.reset(cartesian.position, cartesian.heading);
-    agent.vehicle.state.speed = 22.0 + Math.random() * 6.0;
+    const spawnS = isOncoming
+      ? (baseS + 130 + Math.random() * 80) % totalLength
+      : (baseS + 80 + Math.random() * 60) % totalLength;
+    const cartesian = this.track.frenet.frenetToCartesian(spawnS, targetD);
+    const heading = isOncoming ? (cartesian.heading + Math.PI) : cartesian.heading;
+
+    agent.vehicle.reset(cartesian.position, heading);
+    agent.vehicle.state.speed = 20.0 + Math.random() * 5.0;
     agent.currentLaneIndex = laneIdx;
     agent.targetLaneIndex = laneIdx;
     agent.isChangingLane = false;
@@ -182,8 +189,22 @@ export class TrafficManager {
 
         if (shouldCheckOvertake) {
           const candidateLanes: number[] = [];
-          if (agent.currentLaneIndex > 0) candidateLanes.push(agent.currentLaneIndex - 1);
-          if (agent.currentLaneIndex < this.track.laneCount - 1) candidateLanes.push(agent.currentLaneIndex + 1);
+          const isOncoming = this.track.isOncomingLane(agent.currentLaneIndex);
+
+          if (this.track.isBidirectional) {
+            if (isOncoming) {
+              // Respect double solid yellow: stay strictly in oncoming lanes (0 to oncomingLaneCount - 1)
+              if (agent.currentLaneIndex > 0) candidateLanes.push(agent.currentLaneIndex - 1);
+              if (agent.currentLaneIndex < this.track.oncomingLaneCount - 1) candidateLanes.push(agent.currentLaneIndex + 1);
+            } else {
+              // Respect double solid yellow: stay strictly in forward lanes (oncomingLaneCount to laneCount - 1)
+              if (agent.currentLaneIndex > this.track.oncomingLaneCount) candidateLanes.push(agent.currentLaneIndex - 1);
+              if (agent.currentLaneIndex < this.track.laneCount - 1) candidateLanes.push(agent.currentLaneIndex + 1);
+            }
+          } else {
+            if (agent.currentLaneIndex > 0) candidateLanes.push(agent.currentLaneIndex - 1);
+            if (agent.currentLaneIndex < this.track.laneCount - 1) candidateLanes.push(agent.currentLaneIndex + 1);
+          }
 
           for (const candidate of candidateLanes) {
             const candD = this.track.getLaneCenterD(candidate);
@@ -247,8 +268,13 @@ export class TrafficManager {
       }
 
       // Lateral steering towards target lookahead point along path
+      const isOncoming = this.track.isOncomingLane(agent.currentLaneIndex);
       const lookaheadDist = Math.max(9.0, vState.speed * 0.9);
-      const targetS = frenet.s + lookaheadDist;
+      let targetS = isOncoming ? frenet.s - lookaheadDist : frenet.s + lookaheadDist;
+      if (this.track.closed) {
+        if (targetS < 0) targetS += this.track.spline.totalLength;
+        if (targetS >= this.track.spline.totalLength) targetS -= this.track.spline.totalLength;
+      }
       const targetCartesian = this.track.frenet.frenetToCartesian(targetS, targetD);
 
       const toTarget = targetCartesian.position.sub(vState.position);

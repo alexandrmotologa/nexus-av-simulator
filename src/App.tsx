@@ -56,6 +56,10 @@ export function App() {
   const lastMousePosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const isDraggingRef = useRef<boolean>(false);
 
+  // Touch gesture tracking for mobile pinch-to-zoom and pan
+  const touchStartDistRef = useRef<number | null>(null);
+  const touchStartZoomRef = useRef<number>(4.5);
+
   // Initialize Engine and Renderer
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -86,11 +90,11 @@ export function App() {
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
 
-    // Mouse wheel zoom
+    // Mouse wheel zoom with expanded range
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
-      renderer.camera.targetZoom = Math.max(0.6, Math.min(6.0, renderer.camera.targetZoom * zoomFactor));
+      const zoomFactor = e.deltaY > 0 ? 0.85 : 1.18;
+      renderer.camera.zoomBy(zoomFactor);
     };
     canvas.addEventListener('wheel', onWheel, { passive: false });
 
@@ -242,6 +246,68 @@ export function App() {
     }
   };
 
+  const handleZoomIn = () => {
+    rendererRef.current?.camera.zoomIn();
+  };
+
+  const handleZoomOut = () => {
+    rendererRef.current?.camera.zoomOut();
+  };
+
+  const handleResetZoom = () => {
+    rendererRef.current?.camera.resetZoom();
+  };
+
+  // Touch event handlers for mobile responsiveness
+  const handleCanvasTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (e.touches.length === 1) {
+      isMouseDownRef.current = true;
+      isDraggingRef.current = false;
+      dragStartPosRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      lastMousePosRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    } else if (e.touches.length === 2 && rendererRef.current) {
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      touchStartDistRef.current = dist;
+      touchStartZoomRef.current = rendererRef.current.camera.targetZoom;
+    }
+  };
+
+  const handleCanvasTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (e.touches.length === 1 && isMouseDownRef.current && rendererRef.current) {
+      const dx = e.touches[0].clientX - lastMousePosRef.current.x;
+      const dy = e.touches[0].clientY - lastMousePosRef.current.y;
+      lastMousePosRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+
+      const totalDrag = Math.hypot(
+        e.touches[0].clientX - dragStartPosRef.current.x,
+        e.touches[0].clientY - dragStartPosRef.current.y
+      );
+      if (totalDrag > 6) {
+        isDraggingRef.current = true;
+        rendererRef.current.camera.panBy(dx, dy);
+        setIsCameraLocked(false);
+      }
+    } else if (e.touches.length === 2 && touchStartDistRef.current && rendererRef.current) {
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      const factor = dist / touchStartDistRef.current;
+      rendererRef.current.camera.targetZoom = Math.max(
+        0.4,
+        Math.min(28.0, touchStartZoomRef.current * factor)
+      );
+    }
+  };
+
+  const handleCanvasTouchEnd = () => {
+    isMouseDownRef.current = false;
+    touchStartDistRef.current = null;
+  };
+
   const handleSnapCamera = () => {
     if (rendererRef.current && engineRef.current) {
       followedVehicleRef.current = null;
@@ -383,7 +449,10 @@ export function App() {
         onMouseDown={handleCanvasMouseDown}
         onMouseMove={handleCanvasMouseMove}
         onMouseUp={handleCanvasMouseUp}
-        className={`absolute inset-0 block ${
+        onTouchStart={handleCanvasTouchStart}
+        onTouchMove={handleCanvasTouchMove}
+        onTouchEnd={handleCanvasTouchEnd}
+        className={`absolute inset-0 block touch-none ${
           sandboxActive ? 'cursor-crosshair' : isCameraLocked ? 'cursor-grab' : 'cursor-move'
         }`}
       />
@@ -511,6 +580,9 @@ export function App() {
           onImportBrain={handleImportBrain}
           isCameraLocked={isCameraLocked}
           onSnapCamera={handleSnapCamera}
+          onZoomIn={handleZoomIn}
+          onZoomOut={handleZoomOut}
+          onResetZoom={handleResetZoom}
         />
       </footer>
     </div>

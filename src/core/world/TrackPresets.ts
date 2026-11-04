@@ -110,4 +110,53 @@ export const TRACK_PRESETS: TrackPresetMeta[] = [
       return new Track('straight-highway', 'Infinite Highway (Benchmark)', waypoints, 3, 4.0, true);
     },
   },
+  {
+    id: 'pacific-coast-highway',
+    name: 'Pacific Two-Way Arterial (6 Lanes)',
+    description: 'Bidirectional multi-lane expressway: 3 oncoming lanes, double solid yellow centerline divider, and 3 forward lanes.',
+    difficulty: 'Intermediate',
+    laneCount: 6,
+    laneWidth: 3.8,
+    closed: true,
+    createTrack: () => {
+      const waypoints = [
+        new Vector2D(0, 0),
+        new Vector2D(350, 40),
+        new Vector2D(650, 140),
+        new Vector2D(800, 360),
+        new Vector2D(680, 580),
+        new Vector2D(350, 620),
+        new Vector2D(50, 520),
+        new Vector2D(-200, 420),
+        new Vector2D(-350, 240),
+        new Vector2D(-250, 60),
+      ];
+      return new Track('pacific-coast-highway', 'Pacific Two-Way Arterial (6 Lanes)', waypoints, 6, 3.8, true, true, 3);
+    },
+  },
+  {
+    id: 'transfagarasan-pass',
+    name: 'Transfăgărășan Two-Way Pass (4 Lanes)',
+    description: 'Bidirectional mountain pass: 2 oncoming lanes, double solid continuous lines, and 2 forward lanes with tight chicanes.',
+    difficulty: 'Expert',
+    laneCount: 4,
+    laneWidth: 3.8,
+    closed: true,
+    createTrack: () => {
+      const waypoints = [
+        new Vector2D(0, 0),
+        new Vector2D(180, 100),
+        new Vector2D(320, -60),
+        new Vector2D(480, 110),
+        new Vector2D(640, -40),
+        new Vector2D(700, 200),
+        new Vector2D(580, 360),
+        new Vector2D(380, 240),
+        new Vector2D(220, 420),
+        new Vector2D(60, 300),
+        new Vector2D(-120, 220),
+      ];
+      return new Track('transfagarasan-pass', 'Transfăgărășan Two-Way Pass (4 Lanes)', waypoints, 4, 3.8, true, true, 2);
+    },
+  },
 ];

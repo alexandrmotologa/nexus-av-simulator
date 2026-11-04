@@ -293,13 +293,37 @@ export class CanvasRenderer {
     this.renderPolyline(track.leftBoundary);
     this.renderPolyline(track.rightBoundary);
 
-    // C. Dashed Lane Dividers
+    // C. Realistic Highway & Street Road Markings (Dashed White, Solid White, Double Solid Yellow)
     if (options.showDividers) {
-      this.ctx.setLineDash([2.5, 3.5]);
-      this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-      this.ctx.lineWidth = 0.22;
-      for (const divider of track.laneDividers) {
-        this.renderPolyline(divider);
+      const details = track.laneDividerDetails.length > 0
+        ? track.laneDividerDetails
+        : track.laneDividers.map((pts, i) => ({ index: i, type: 'DASHED_WHITE' as const, points: pts }));
+
+      for (const item of details) {
+        if (item.type === 'DOUBLE_SOLID_YELLOW') {
+          // Double Solid Yellow Line (Two parallel continuous yellow stripes dividing opposing traffic)
+          this.ctx.setLineDash([]);
+          // Outer yellow band
+          this.ctx.strokeStyle = '#facc15';
+          this.ctx.lineWidth = 0.48;
+          this.renderPolyline(item.points);
+          // Inner asphalt divider gap
+          this.ctx.strokeStyle = isNight ? '#0a0e1a' : isWet ? '#111827' : '#1e293b';
+          this.ctx.lineWidth = 0.16;
+          this.renderPolyline(item.points);
+        } else if (item.type === 'SOLID_WHITE') {
+          // Solid White Line (Lane discipline / no overtaking)
+          this.ctx.setLineDash([]);
+          this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+          this.ctx.lineWidth = 0.24;
+          this.renderPolyline(item.points);
+        } else {
+          // Standard Dashed White Line (Overtaking / lane changes permitted)
+          this.ctx.setLineDash([3.0, 3.2]);
+          this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+          this.ctx.lineWidth = 0.22;
+          this.renderPolyline(item.points);
+        }
       }
       this.ctx.setLineDash([]);
     }

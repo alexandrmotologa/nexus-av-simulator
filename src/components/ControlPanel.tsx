@@ -18,6 +18,8 @@ import {
   Download,
   Upload,
   Crosshair,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 
 interface ControlPanelProps {
@@ -44,6 +46,9 @@ interface ControlPanelProps {
   onImportBrain: (file: File) => void;
   isCameraLocked: boolean;
   onSnapCamera: () => void;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onResetZoom: () => void;
 }
 
 export const ControlPanel: React.FC<ControlPanelProps> = ({
@@ -70,6 +75,9 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   onImportBrain,
   isCameraLocked,
   onSnapCamera,
+  onZoomIn,
+  onZoomOut,
+  onResetZoom,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -300,6 +308,31 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
         >
           <Layers className="w-3.5 h-3.5" />
         </button>
+
+        {/* Zoom Controls */}
+        <div className="flex items-center gap-0.5 bg-slate-950 p-0.5 rounded-lg border border-slate-800">
+          <button
+            onClick={onZoomOut}
+            title="Zoom Out (-)"
+            className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition-all"
+          >
+            <ZoomOut className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={onResetZoom}
+            title="Reset Zoom (Default Close-up)"
+            className="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium text-slate-400 hover:text-sky-300 hover:bg-slate-800 transition-all"
+          >
+            1x
+          </button>
+          <button
+            onClick={onZoomIn}
+            title="Zoom In (+)"
+            className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition-all"
+          >
+            <ZoomIn className="w-3.5 h-3.5" />
+          </button>
+        </div>
 
         <button
           onClick={onReset}

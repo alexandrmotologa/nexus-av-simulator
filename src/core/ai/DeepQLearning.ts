@@ -499,7 +499,10 @@ export class DeepQLearningAgent {
   }
 
   public resetEpisode(track: Track): void {
-    const start = track.frenet.frenetToCartesian(10.0, track.getLaneCenterD(1));
+    const laneStart = track.isBidirectional ? track.oncomingLaneCount : 0;
+    const forwardLaneCount = Math.max(1, track.laneCount - laneStart);
+    const middleForwardLane = laneStart + Math.floor(forwardLaneCount / 2);
+    const start = track.frenet.frenetToCartesian(10.0, track.getLaneCenterD(middleForwardLane));
     this.vehicle.reset(start.position, start.heading);
     this.prevState = null;
     this.episode++;
