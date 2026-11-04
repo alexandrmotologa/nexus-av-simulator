@@ -12,6 +12,7 @@ import {
   Sun,
   CloudRain,
   Moon,
+  CloudFog,
   Construction,
   Trash2,
   Download,
@@ -174,6 +175,19 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
         >
           <Moon className="w-3 h-3 text-purple-400" />
           <span className="hidden md:inline">Night</span>
+        </button>
+
+        <button
+          onClick={() => onSetWeather('FOG')}
+          className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all ${
+            weather === 'FOG'
+              ? 'bg-slate-500/30 text-slate-200 border border-slate-400/50'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+          title="Atmospheric Fog: Severely Truncated Headlight Range (11m) & LiDAR Scattering"
+        >
+          <CloudFog className="w-3 h-3 text-slate-300" />
+          <span className="hidden md:inline">Fog</span>
         </button>
       </div>
 

@@ -189,8 +189,9 @@ export class TrafficManager {
             const candD = this.track.getLaneCenterD(candidate);
             let laneIsClear = true;
 
-            const minBehind = isObstacleAhead ? -4.5 : -8.0;
-            const minAhead = isObstacleAhead ? 9.0 : 16.0;
+            // Strict traffic rules: ensure target lane is clean and do not cut off vehicles behind
+            const minBehind = -12.0;
+            const minAhead = isObstacleAhead ? 10.0 : 18.0;
 
             for (const other of allVehicles) {
               if (other === agent.vehicle) continue;
@@ -206,6 +207,15 @@ export class TrafficManager {
                 if (sDist > minBehind && sDist < minAhead) {
                   laneIsClear = false;
                   break;
+                }
+                // Time-To-Collision check: never cut off a faster vehicle approaching from behind
+                if (sDist < 0 && sDist > -25.0 && other.state.speed > agent.vehicle.state.speed) {
+                  const closingSpeed = other.state.speed - agent.vehicle.state.speed;
+                  const ttc = Math.abs(sDist) / closingSpeed;
+                  if (ttc < 3.0) {
+                    laneIsClear = false;
+                    break;
+                  }
                 }
               }
             }

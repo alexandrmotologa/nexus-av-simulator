@@ -6,6 +6,7 @@ import { Track } from '../world/Track';
 import { ControlInput } from '../physics/VehicleState';
 import { Collision } from '../math/Collision';
 import { RoadObstacle } from '../world/Obstacle';
+import { SafetyGovernor } from '../control/SafetyGovernor';
 
 export interface Transition {
   state: Float32Array;
@@ -78,6 +79,7 @@ export class DeepQLearningAgent {
   private stepsSinceTargetUpdate: number = 0;
   private targetUpdateFrequency: number = 180;
   private idleSteps: number = 0;
+  private governor: SafetyGovernor = new SafetyGovernor();
 
   constructor(track: Track) {
     // 24 inputs -> 32 hidden -> 24 hidden -> 7 action Q-values
@@ -276,10 +278,20 @@ export class DeepQLearningAgent {
       }
     }
 
-    // 4. Select next action and execute physics
+    // 4. Select next action and execute safe physics
     const action = this.selectAction(currentState);
-    const control = this.actionToControl(action);
-    v.step(control, dt);
+    const rawControl = this.actionToControl(action);
+    const safeControl = this.governor.applySafetyShield(
+      v,
+      track,
+      this.lidar,
+      this.radar,
+      traffic,
+      obstacles,
+      rawControl,
+      dt
+    );
+    v.step(safeControl, dt);
 
     // Hard barrier check: keep inside road
     v.enforceTrackBoundary(track);

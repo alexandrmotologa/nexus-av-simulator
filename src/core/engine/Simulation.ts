@@ -10,7 +10,7 @@ import { LidarSensor } from '../sensors/LidarSensor';
 import { ObstacleManager, RoadObstacle } from '../world/Obstacle';
 
 export type PilotMode = 'NEUROEVOLUTION' | 'DEEP_RL_AGENT' | 'CLASSIC_ROBOTICS' | 'HUMAN_DRIVER';
-export type WeatherMode = 'DRY' | 'WET' | 'NIGHT';
+export type WeatherMode = 'DRY' | 'WET' | 'NIGHT' | 'FOG';
 
 export interface LeaderboardEntry {
   rank: number;
@@ -109,8 +109,8 @@ export class SimulationEngine {
 
   public setWeather(mode: WeatherMode): void {
     this.weather = mode;
-    const grip = mode === 'WET' ? 4.5 : 8.5;
-    const brake = mode === 'WET' ? 6.0 : 9.5;
+    const grip = mode === 'WET' ? 4.5 : mode === 'FOG' ? 5.2 : 8.5;
+    const brake = mode === 'WET' ? 6.0 : mode === 'FOG' ? 6.8 : 9.5;
 
     this.classicVehicle.config.tireGripCoeff = grip;
     this.classicVehicle.config.brakeDecel = brake;
@@ -122,11 +122,24 @@ export class SimulationEngine {
     for (const a of this.geneticEngine.population) {
       a.vehicle.config.tireGripCoeff = grip;
       a.vehicle.config.brakeDecel = brake;
+      a.sensor.setWeather(mode);
     }
     for (const t of this.trafficManager.agents) {
       t.vehicle.config.tireGripCoeff = grip;
       t.vehicle.config.brakeDecel = brake;
+
+      // Traffic rules for adverse weather: slower speeds & larger following distance
+      if (mode === 'WET' || mode === 'FOG') {
+        t.idm.params.desiredSpeed = Math.min(18.0, t.idm.params.desiredSpeed);
+        t.idm.params.timeHeadway = 2.2;
+      } else {
+        t.idm.params.desiredSpeed = 24.0;
+        t.idm.params.timeHeadway = 1.4;
+      }
     }
+
+    this.humanLidar.setWeather(mode);
+    this.rlAgent.lidar.setWeather(mode);
   }
 
   public setTrafficDensity(count: number): void {

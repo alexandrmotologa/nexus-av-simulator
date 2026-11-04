@@ -7,6 +7,7 @@ import { Vector2D } from '../math/Vector2D';
 import { ControlInput } from '../physics/VehicleState';
 import { Collision } from '../math/Collision';
 import { RoadObstacle } from '../world/Obstacle';
+import { SafetyGovernor } from '../control/SafetyGovernor';
 
 export interface AgentFitnessStats {
   distance: number;
@@ -31,6 +32,8 @@ export interface NeuralAgent {
   lastS: number;
   stalledFrames: number;
   deadTimer: number;
+  assignedLane: number;
+  targetLane: number;
 }
 
 export class GeneticEngine {
@@ -52,6 +55,7 @@ export class GeneticEngine {
   public maxGenerationFrames: number = 850; // ~16-18s per generation to prevent hangs
 
   private track: Track;
+  private governor: SafetyGovernor = new SafetyGovernor();
 
   constructor(track: Track, populationSize: number = 40) {
     this.track = track;
@@ -105,20 +109,36 @@ export class GeneticEngine {
     return net;
   }
 
+  public getGridStartPosition(agentIndex: number): { pos: Vector2D; heading: number; lane: number; s: number } {
+    const laneCount = Math.max(1, this.track.laneCount);
+    const lane = agentIndex % laneCount;
+    const row = Math.floor(agentIndex / laneCount);
+    // Base distance s = 14m for pole position, staggered in clean starting grid boxes by 6m
+    const s = 14.0 + row * 6.0;
+    const d = this.track.getLaneCenterD(lane);
+    const cartesian = this.track.frenet.frenetToCartesian(s, d);
+    return {
+      pos: cartesian.position,
+      heading: cartesian.heading,
+      lane,
+      s,
+    };
+  }
+
   public initPopulation(): void {
     this.population = [];
-    const startPoint = this.getStartPosition();
 
     for (let i = 0; i < this.populationSize; i++) {
+      const grid = this.getGridStartPosition(i);
       const vehicle = new VehicleModel(
         {
           id: `ai-agent-${i}`,
           name: `NeuroBot-${i}`,
-          color: i === 0 ? '#10b981' : '#ef4444',
+          color: i === 0 ? '#10b981' : i < this.elitismCount ? '#f59e0b' : '#ef4444',
           maxSpeed: 40.0,
         },
-        startPoint.pos,
-        startPoint.heading
+        grid.pos,
+        grid.heading
       );
       vehicle.state.speed = 10.0; // rolling start (~36 km/h)
 
@@ -140,9 +160,11 @@ export class GeneticEngine {
         },
         isAlive: true,
         overtakenVehicles: new Set(),
-        lastS: 10.0,
+        lastS: grid.s,
         stalledFrames: 0,
         deadTimer: 0,
+        assignedLane: grid.lane,
+        targetLane: grid.lane,
       };
 
       this.population.push(agent);
@@ -152,7 +174,7 @@ export class GeneticEngine {
   }
 
   public getStartPosition(): { pos: Vector2D; heading: number } {
-    const s = 10.0;
+    const s = 14.0;
     const d = this.track.getLaneCenterD(1); // Middle lane
     const cartesian = this.track.frenet.frenetToCartesian(s, d);
     return {
@@ -162,17 +184,19 @@ export class GeneticEngine {
   }
 
   public resetAllAgents(): void {
-    const startPoint = this.getStartPosition();
     this.generationFrames = 0;
     for (let i = 0; i < this.population.length; i++) {
       const agent = this.population[i];
-      agent.vehicle.reset(startPoint.pos, startPoint.heading);
+      const grid = this.getGridStartPosition(i);
+      agent.vehicle.reset(grid.pos, grid.heading);
       agent.vehicle.state.speed = 10.0; // rolling start
       agent.isAlive = true;
       agent.fitness = 0;
-      agent.lastS = 10.0;
+      agent.lastS = grid.s;
       agent.stalledFrames = 0;
       agent.deadTimer = 0;
+      agent.assignedLane = grid.lane;
+      agent.targetLane = grid.lane;
       agent.overtakenVehicles.clear();
       agent.stats = {
         distance: 0,
@@ -261,8 +285,38 @@ export class GeneticEngine {
       // outputs[2]: Continuous steering angle (-1 left to +1 right)
       const steer = Math.max(-1, Math.min(1, outputs[2]));
 
-      const controlInput: ControlInput = { throttle, brake, steer };
-      v.step(controlInput, dt);
+      // 3b. Evaluate Safe Lane Change (Traffic Rules & Non-Chaotic Driving)
+      const radarLead = agent.radar.targetDetected ? agent.radar.targetDistance : Infinity;
+      const needOvertake = radarLead < 22.0 || agent.radar.closingSpeed > 3.0;
+
+      if (needOvertake && Math.random() < 0.05) {
+        const candidateLanes: number[] = [];
+        if (agent.assignedLane > 0) candidateLanes.push(agent.assignedLane - 1);
+        if (agent.assignedLane < this.track.laneCount - 1) candidateLanes.push(agent.assignedLane + 1);
+
+        for (const targetL of candidateLanes) {
+          if (this.governor.isLaneChangeSafe(v, this.track, trafficVehicles, targetL)) {
+            agent.assignedLane = targetL;
+            break;
+          }
+        }
+      }
+
+      // 3c. Apply Automotive Safety Shield (LiDAR Wall Repulsion + Lane Centering + AEB)
+      const rawControl: ControlInput = { throttle, brake, steer };
+      const safeControl = this.governor.applySafetyShield(
+        v,
+        this.track,
+        agent.sensor,
+        agent.radar,
+        trafficVehicles,
+        obstacles,
+        rawControl,
+        dt,
+        agent.assignedLane
+      );
+
+      v.step(safeControl, dt);
 
       // 4. Hard Barrier / Wall Collision check
       const hitBarrier = v.enforceTrackBoundary(this.track);
@@ -307,7 +361,7 @@ export class GeneticEngine {
       if (agent.isAlive) {
         if (v.state.speed < 1.5) {
           agent.stalledFrames++;
-          if (agent.stalledFrames > 120) {
+          if (agent.stalledFrames > 300) {
             v.state.isDamaged = true;
             agent.isAlive = false;
             agent.fitness -= 100.0;
@@ -430,19 +484,21 @@ export class GeneticEngine {
       nextBrains.push(this.createDefaultBrain());
     }
 
-    // Apply new brains and reset vehicles
-    const startPoint = this.getStartPosition();
+    // Apply new brains and reset vehicles on staggered grid boxes
     for (let i = 0; i < this.population.length; i++) {
       const agent = this.population[i];
+      const grid = this.getGridStartPosition(i);
       agent.brain = nextBrains[i] || this.createDefaultBrain();
-      agent.vehicle.reset(startPoint.pos, startPoint.heading);
+      agent.vehicle.reset(grid.pos, grid.heading);
       agent.vehicle.state.speed = 10.0; // rolling start
       agent.vehicle.config.color = i === 0 ? '#10b981' : i < this.elitismCount ? '#f59e0b' : '#ef4444';
       agent.isAlive = true;
       agent.fitness = 0;
-      agent.lastS = 10.0;
+      agent.lastS = grid.s;
       agent.stalledFrames = 0;
       agent.deadTimer = 0;
+      agent.assignedLane = grid.lane;
+      agent.targetLane = grid.lane;
       agent.overtakenVehicles.clear();
       agent.stats = {
         distance: 0,

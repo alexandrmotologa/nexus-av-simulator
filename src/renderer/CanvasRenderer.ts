@@ -12,7 +12,7 @@ export interface RenderOptions {
   showTrails: boolean;
   activeFollowVehicle: VehicleModel | null;
   obstacles?: RoadObstacle[];
-  weather?: 'DRY' | 'WET' | 'NIGHT';
+  weather?: 'DRY' | 'WET' | 'NIGHT' | 'FOG';
 }
 
 export class CanvasRenderer {
@@ -96,20 +96,27 @@ export class CanvasRenderer {
 
     // 3. Render NPC Traffic Vehicles
     for (const traffic of trafficVehicles) {
-      this.renderVehicle(traffic, false);
+      this.renderVehicle(traffic, false, options.weather);
     }
 
     // 4. Render Ego / AI Autonomous Vehicles
+    const isMultiFleet = egoVehicles.length > 1;
     for (let i = 0; i < egoVehicles.length; i++) {
       const vehicle = egoVehicles[i];
-      const isLead = vehicle === options.activeFollowVehicle || i === 0;
+      const isLead = vehicle === options.activeFollowVehicle || (options.activeFollowVehicle === null && i === 0);
 
-      // Skip dead/crashed candidates so the starting grid stays clean and visible
+      // Skip dead/crashed candidates so the track stays clean
       if (vehicle.state.isDamaged && !isLead) {
         continue;
       }
 
-      this.renderVehicle(vehicle, isLead);
+      this.ctx.save();
+      if (isMultiFleet && !isLead) {
+        this.ctx.globalAlpha = 0.32; // Clean semi-transparent ghost fleet runner
+      }
+
+      this.renderVehicle(vehicle, isLead, options.weather);
+      this.ctx.restore();
 
       // Render LiDAR for the active follow car
       if (options.showLidar && isLead && lidarSensors[i]) {
@@ -126,9 +133,11 @@ export class CanvasRenderer {
 
     this.ctx.restore();
 
-    // 6. Weather Screen Effects (Rain Streaks)
+    // 6. Weather Screen Effects (Rain Streaks / Fog Clouds)
     if (options.weather === 'WET') {
       this.renderRainEffect();
+    } else if (options.weather === 'FOG') {
+      this.renderFogEffect();
     }
   }
 
@@ -225,6 +234,32 @@ export class CanvasRenderer {
     this.ctx.restore();
   }
 
+  private renderFogEffect(): void {
+    const dpr = window.devicePixelRatio || 1;
+    const w = this.canvas.width / dpr;
+    const h = this.canvas.height / dpr;
+    this.fogOffset += 0.4;
+
+    this.ctx.save();
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // Screen space
+
+    // Translucent cool fog mist layer
+    this.ctx.fillStyle = 'rgba(148, 163, 184, 0.24)';
+    this.ctx.fillRect(0, 0, w, h);
+
+    // Drifting atmospheric aerosol fog clouds
+    this.ctx.fillStyle = 'rgba(241, 245, 249, 0.08)';
+    for (let i = 0; i < 7; i++) {
+      const cx = ((i * 260 + this.fogOffset * 1.8) % (w + 400)) - 200;
+      const cy = (i * 110 + Math.sin(this.fogOffset * 0.015 + i) * 60) % h;
+      this.ctx.beginPath();
+      this.ctx.ellipse(cx, cy, 240, 100, 0, 0, Math.PI * 2);
+      this.ctx.fill();
+    }
+
+    this.ctx.restore();
+  }
+
   private renderTrack(track: Track, options: RenderOptions): void {
     if (track.leftBoundary.length < 2 || track.rightBoundary.length < 2) return;
 
@@ -295,7 +330,13 @@ export class CanvasRenderer {
     this.ctx.stroke();
   }
 
-  public renderVehicle(vehicle: VehicleModel, isHighlighted: boolean): void {
+  private fogOffset: number = 0;
+
+  public renderVehicle(
+    vehicle: VehicleModel,
+    isHighlighted: boolean,
+    weather: 'DRY' | 'WET' | 'NIGHT' | 'FOG' = 'DRY'
+  ): void {
     const v = vehicle.state;
     this.ctx.save();
     this.ctx.translate(v.position.x, v.position.y);
@@ -306,17 +347,42 @@ export class CanvasRenderer {
     const halfL = length * 0.5;
     const halfW = width * 0.5;
 
-    // 1. Headlights Projection Cone
-    if (!v.isDamaged) {
-      const grad = this.ctx.createRadialGradient(halfL, 0, 1, halfL + 12, 0, 18);
-      grad.addColorStop(0, 'rgba(254, 240, 138, 0.35)');
-      grad.addColorStop(0.7, 'rgba(254, 240, 138, 0.08)');
+    // 1. Dynamic Weather-Sensitive Headlights
+    // Distance and beam spread are scaled according to atmospheric visibility
+    const shouldDrawHeadlights =
+      !v.isDamaged &&
+      (isHighlighted ||
+        vehicle.config.id.startsWith('traffic-') ||
+        !vehicle.config.id.startsWith('ai-agent-'));
+
+    if (shouldDrawHeadlights) {
+      let beamLength = 22.0;
+      let beamSpread = 2.2;
+      let beamAlpha = 0.35;
+
+      if (weather === 'FOG') {
+        beamLength = 11.0; // Fog aerosol particles absorb & diffuse headlight beam
+        beamSpread = 3.4; // Wide short diffuse halo
+        beamAlpha = 0.58;
+      } else if (weather === 'WET') {
+        beamLength = 17.0; // Rain scatter and dark asphalt absorption
+        beamSpread = 2.5;
+        beamAlpha = 0.3;
+      } else if (weather === 'NIGHT') {
+        beamLength = 26.0; // Sharp high-contrast forward penetration through dark night
+        beamSpread = 2.0;
+        beamAlpha = 0.45;
+      }
+
+      const grad = this.ctx.createRadialGradient(halfL, 0, 1, halfL + beamLength * 0.6, 0, beamLength);
+      grad.addColorStop(0, `rgba(254, 240, 138, ${beamAlpha})`);
+      grad.addColorStop(0.7, `rgba(254, 240, 138, ${beamAlpha * 0.25})`);
       grad.addColorStop(1, 'rgba(254, 240, 138, 0)');
 
       this.ctx.beginPath();
       this.ctx.moveTo(halfL, -halfW * 0.7);
-      this.ctx.lineTo(halfL + 20, -halfW * 2.2);
-      this.ctx.lineTo(halfL + 20, halfW * 2.2);
+      this.ctx.lineTo(halfL + beamLength, -halfW * beamSpread);
+      this.ctx.lineTo(halfL + beamLength, halfW * beamSpread);
       this.ctx.lineTo(halfL, halfW * 0.7);
       this.ctx.closePath();
       this.ctx.fillStyle = grad;

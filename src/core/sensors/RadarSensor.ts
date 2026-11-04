@@ -16,6 +16,18 @@ export class RadarSensor {
   public rearTarget: RadarTarget | null = null;
   public rearThreatLevel: number = 0; // 0 to 1
 
+  public get targetDetected(): boolean {
+    return this.frontTarget !== null;
+  }
+
+  public get targetDistance(): number {
+    return this.frontTarget ? this.frontTarget.distance : this.maxRange;
+  }
+
+  public get closingSpeed(): number {
+    return this.frontTarget && this.frontTarget.relativeSpeed < 0 ? Math.abs(this.frontTarget.relativeSpeed) : 0;
+  }
+
   constructor(maxRange: number = 70.0) {
     this.maxRange = maxRange;
   }

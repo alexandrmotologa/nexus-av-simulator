@@ -35,6 +35,22 @@ export class LidarSensor {
     this.config = { ...DEFAULT_LIDAR_CONFIG, ...config };
   }
 
+  public setWeather(weather: 'DRY' | 'WET' | 'NIGHT' | 'FOG'): void {
+    if (weather === 'DRY') {
+      this.config.maxRange = 50.0;
+      this.config.noiseStdDev = 0.0;
+    } else if (weather === 'WET') {
+      this.config.maxRange = 36.0; // Rain drops cause laser refraction & scatter
+      this.config.noiseStdDev = 0.25;
+    } else if (weather === 'NIGHT') {
+      this.config.maxRange = 48.0; // Infrared laser penetrates darkness well
+      this.config.noiseStdDev = 0.05;
+    } else if (weather === 'FOG') {
+      this.config.maxRange = 22.0; // Dense aerosol particles severely attenuate laser pulses
+      this.config.noiseStdDev = 0.6;
+    }
+  }
+
   /**
    * Casts 360° LiDAR beams covering front, flanks, and rear blind-spots
    * against track boundaries and surrounding traffic vehicles.
@@ -119,6 +135,12 @@ export class LidarSensor {
           hitType = 'vehicle';
           targetVehicleId = obs.id;
         }
+      }
+
+      // Apply atmospheric weather noise to laser distance measurement
+      if (this.config.noiseStdDev > 0 && closestDist < this.config.maxRange) {
+        const noise = (Math.random() - 0.5) * 2 * this.config.noiseStdDev;
+        closestDist = Math.max(0.5, Math.min(this.config.maxRange, closestDist + noise));
       }
 
       this.hits.push({
