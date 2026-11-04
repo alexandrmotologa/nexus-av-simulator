@@ -31,10 +31,15 @@ export class VehicleState {
   public steerAngle: number = 0; // Front wheel angle relative to chassis
   public yawRate: number = 0; // Angular velocity (rad/s)
   public lateralAcc: number = 0; // G-force indicator (m/s²)
+  public longitudinalAcc: number = 0; // Longitudinal acceleration (m/s²)
   public isDamaged: boolean = false;
   public isSkidding: boolean = false;
   public totalDistance: number = 0;
   public polygon: Vector2D[] = [];
+  public isBlinkingLeft: boolean = false;
+  public isBlinkingRight: boolean = false;
+  public isBraking: boolean = false;
+  public blinkTimer: number = 0;
 
   constructor(initialPos: Vector2D, initialHeading: number = 0) {
     this.position = initialPos.clone();

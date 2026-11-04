@@ -8,6 +8,8 @@ import { VehicleModel } from '../physics/VehicleModel';
 import { RadarSensor } from '../sensors/RadarSensor';
 import { LidarSensor } from '../sensors/LidarSensor';
 import { ObstacleManager, RoadObstacle } from '../world/Obstacle';
+import { SoundEngine } from '../audio/SoundEngine';
+import { BlackBoxRecorder, IncidentReport } from '../telemetry/BlackBoxRecorder';
 
 export type PilotMode = 'NEUROEVOLUTION' | 'DEEP_RL_AGENT' | 'CLASSIC_ROBOTICS' | 'HUMAN_DRIVER';
 export type WeatherMode = 'DRY' | 'WET' | 'NIGHT' | 'FOG';
@@ -40,6 +42,10 @@ export interface SimulationTelemetry {
   obstacleCount: number;
   fitnessHistory: { gen: number; fitness: number; speed: number }[];
   leaderboard: LeaderboardEntry[];
+  activeSpeedLimit: number;
+  speedCompliance: 'OPTIMAL' | 'WARNING' | 'SPEEDING';
+  longitudinalG: number;
+  isSkidding: boolean;
 }
 
 export class SimulationEngine {
@@ -266,6 +272,35 @@ export class SimulationEngine {
         }
       }
     }
+
+    // 3. Procedural Audio Engine Update
+    if (activeEgo) {
+      const v = activeEgo.state;
+      const isBlinking = v.isBlinkingLeft || v.isBlinkingRight;
+      const blinkPhase = Math.floor(v.blinkTimer * 3.5) % 2 === 0;
+      const isAEBWarning = v.isBraking && v.speed > 5.0;
+      SoundEngine.getInstance().update(v.speed, v.speed > 0.5 ? 0.7 : 0, isBlinking, blinkPhase, isAEBWarning);
+
+      // 4. Black Box Flight Recorder Telemetry Capture
+      BlackBoxRecorder.getInstance().recordFrame({
+        timestamp: performance.now(),
+        position: { x: v.position.x, y: v.position.y },
+        heading: v.heading,
+        speedKmH: Math.round(v.speed * 3.6),
+        steerAngleDeg: parseFloat(((v.steerAngle * 180) / Math.PI).toFixed(1)),
+        lateralG: parseFloat((v.lateralAcc / 9.81).toFixed(2)),
+        longitudinalG: parseFloat((v.longitudinalAcc / 9.81).toFixed(2)),
+        throttle: v.speed > 0.5 ? 0.8 : 0,
+        brake: v.isBraking ? 1.0 : 0,
+        isDamaged: v.isDamaged,
+        closestDistance: 25.0,
+        closingSpeed: 0,
+      });
+
+      if (v.isDamaged) {
+        BlackBoxRecorder.getInstance().triggerIncident('Kinematic Boundary or Vehicle Impact');
+      }
+    }
   }
 
   /** Headless hyper-speed batch training (evaluates N generations in pure CPU loop) */
@@ -307,6 +342,8 @@ export class SimulationEngine {
     let bestDist = 0;
     let steerAngle = 0;
     let latG = 0;
+    let longG = 0;
+    let isSkid = false;
     let alive = 0;
 
     if (this.pilotMode === 'NEUROEVOLUTION') {
@@ -317,6 +354,8 @@ export class SimulationEngine {
         bestDist = v.totalDistance;
         steerAngle = (v.steerAngle * 180) / Math.PI;
         latG = v.lateralAcc / 9.81;
+        longG = v.longitudinalAcc / 9.81;
+        isSkid = v.isSkidding;
       }
     } else if (this.pilotMode === 'DEEP_RL_AGENT') {
       const v = this.rlAgent.vehicle.state;
@@ -325,6 +364,8 @@ export class SimulationEngine {
       bestDist = v.totalDistance;
       steerAngle = (v.steerAngle * 180) / Math.PI;
       latG = v.lateralAcc / 9.81;
+      longG = v.longitudinalAcc / 9.81;
+      isSkid = v.isSkidding;
     } else if (this.pilotMode === 'CLASSIC_ROBOTICS') {
       const v = this.classicVehicle.state;
       alive = v.isDamaged ? 0 : 1;
@@ -332,6 +373,8 @@ export class SimulationEngine {
       bestDist = v.totalDistance;
       steerAngle = (v.steerAngle * 180) / Math.PI;
       latG = v.lateralAcc / 9.81;
+      longG = v.longitudinalAcc / 9.81;
+      isSkid = v.isSkidding;
     } else {
       const v = this.humanVehicle.state;
       alive = v.isDamaged ? 0 : 1;
@@ -339,6 +382,8 @@ export class SimulationEngine {
       bestDist = v.totalDistance;
       steerAngle = (v.steerAngle * 180) / Math.PI;
       latG = v.lateralAcc / 9.81;
+      longG = v.longitudinalAcc / 9.81;
+      isSkid = v.isSkidding;
     }
 
     const leaderboard: LeaderboardEntry[] = [];
@@ -356,6 +401,25 @@ export class SimulationEngine {
           color: agent.vehicle.config.color,
         });
       }
+    }
+
+    // Evaluate active sector speed limit and legal compliance
+    let egoPos = this.humanVehicle.state.position;
+    if (this.pilotMode === 'NEUROEVOLUTION' && this.geneticEngine.bestAgent) {
+      egoPos = this.geneticEngine.bestAgent.vehicle.state.position;
+    } else if (this.pilotMode === 'DEEP_RL_AGENT') {
+      egoPos = this.rlAgent.vehicle.state.position;
+    } else if (this.pilotMode === 'CLASSIC_ROBOTICS') {
+      egoPos = this.classicVehicle.state.position;
+    }
+
+    const frenet = this.track.frenet.cartesianToFrenet(egoPos, 0, 0);
+    const activeSpeedLimit = this.track.getSpeedLimitAtDistance(frenet.s);
+    let speedCompliance: 'OPTIMAL' | 'WARNING' | 'SPEEDING' = 'OPTIMAL';
+    if (bestSpeed > activeSpeedLimit + 10) {
+      speedCompliance = 'SPEEDING';
+    } else if (bestSpeed > activeSpeedLimit) {
+      speedCompliance = 'WARNING';
     }
 
     return {
@@ -376,6 +440,10 @@ export class SimulationEngine {
       obstacleCount: this.obstacleManager.obstacles.length,
       fitnessHistory: this.fitnessHistory,
       leaderboard,
+      activeSpeedLimit,
+      speedCompliance,
+      longitudinalG: parseFloat(longG.toFixed(2)),
+      isSkidding: isSkid,
     };
   }
 

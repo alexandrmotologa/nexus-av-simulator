@@ -180,6 +180,8 @@ export class TrafficManager {
         if (agent.laneChangeProgress >= 1.0) {
           agent.currentLaneIndex = agent.targetLaneIndex;
           agent.isChangingLane = false;
+          agent.vehicle.state.isBlinkingLeft = false;
+          agent.vehicle.state.isBlinkingRight = false;
         }
       } else {
         const isObstacleAhead = leaderDist < 35.0 && (leaderIsDamaged || leaderSpeed < 3.0);
@@ -246,6 +248,13 @@ export class TrafficManager {
               agent.targetLaneIndex = candidate;
               agent.isChangingLane = true;
               agent.laneChangeProgress = 0;
+              if (candidate > agent.currentLaneIndex) {
+                agent.vehicle.state.isBlinkingRight = true;
+                agent.vehicle.state.isBlinkingLeft = false;
+              } else {
+                agent.vehicle.state.isBlinkingLeft = true;
+                agent.vehicle.state.isBlinkingRight = false;
+              }
               break;
             }
           }

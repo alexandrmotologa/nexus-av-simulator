@@ -20,6 +20,8 @@ import {
   Crosshair,
   ZoomIn,
   ZoomOut,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 
 interface ControlPanelProps {
@@ -49,6 +51,8 @@ interface ControlPanelProps {
   onZoomIn: () => void;
   onZoomOut: () => void;
   onResetZoom: () => void;
+  isMuted: boolean;
+  onToggleMute: () => void;
 }
 
 export const ControlPanel: React.FC<ControlPanelProps> = ({
@@ -78,6 +82,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   onZoomIn,
   onZoomOut,
   onResetZoom,
+  isMuted,
+  onToggleMute,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -333,6 +339,19 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             <ZoomIn className="w-3.5 h-3.5" />
           </button>
         </div>
+
+        {/* Procedural Audio Engine Toggle */}
+        <button
+          onClick={onToggleMute}
+          title={isMuted ? 'Unmute Audio (Synthesized EV Motor & ADAS)' : 'Mute Audio'}
+          className={`p-1.5 rounded-lg border text-xs font-medium transition-all ${
+            !isMuted
+              ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+              : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'
+          }`}
+        >
+          {!isMuted ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+        </button>
 
         <button
           onClick={onReset}

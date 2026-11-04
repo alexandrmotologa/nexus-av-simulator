@@ -49,110 +49,112 @@ export class SafetyGovernor {
     const v = vehicle.state;
     const frenet = track.frenet.cartesianToFrenet(v.position, v.heading, v.speed);
 
-    // 1. Analyze 360° LiDAR rays for wall & obstacle proximity
-    let minLeftDist = Infinity;
-    let minRightDist = Infinity;
+    // 1. Precise Kinematic Lane Centering via Pure Pursuit
+    // Looks ahead along the target lane to determine proper road curvature & heading
+    const currentLane = track.getLaneIndex(frenet.d);
+    const targetLane = assignedLaneIndex >= 0 ? assignedLaneIndex : currentLane;
+    const targetLaneD = track.getLaneCenterD(targetLane);
+
+    const lookahead = Math.max(8.0, Math.min(32.0, v.speed * 0.9));
+    let targetS = frenet.s + lookahead;
+    if (track.closed && track.spline.totalLength > 0) {
+      if (targetS >= track.spline.totalLength) targetS -= track.spline.totalLength;
+      if (targetS < 0) targetS += track.spline.totalLength;
+    }
+
+    const targetWaypoint = track.frenet.frenetToCartesian(targetS, targetLaneD);
+    const toWaypoint = targetWaypoint.position.sub(v.position);
+
+    // Heading error to waypoint
+    const targetAngle = toWaypoint.angle();
+    let alpha = targetAngle - v.heading;
+    while (alpha > Math.PI) alpha -= 2 * Math.PI;
+    while (alpha < -Math.PI) alpha += 2 * Math.PI;
+
+    // Kinematic Pure Pursuit curvature: 2 * sin(alpha) / Ld
+    const Ld = Math.max(1.0, toWaypoint.magnitude());
+    const curvature = (2.0 * Math.sin(alpha)) / Ld;
+    const laneSteerAngle = Math.atan(curvature * vehicle.config.wheelbase);
+    const laneGuidanceSteer = Math.max(-1.0, Math.min(1.0, laneSteerAngle / vehicle.config.maxSteerAngle));
+
+    // 2. 360° LiDAR Repulsive Wall & Obstacle Vector (Vehicle-Local Frame)
+    // Vehicle Forward: (cos(heading), sin(heading))
+    // Vehicle Right:   (-sin(heading), cos(heading)) [Canvas coords: +y is down, so +90° turns right]
+    const uForward = Vector2D.fromAngle(v.heading);
+    const uRight = new Vector2D(-uForward.y, uForward.x);
+
     let minFrontDist = Infinity;
-    let frontObstacleDetected = false;
+    let wallRepulseSteer = 0;
 
     for (let i = 0; i < lidar.hits.length; i++) {
       const hit = lidar.hits[i];
-      const beam = lidar.beams[i];
-      if (!beam) continue;
+      if (hit.hitType === 'none' || hit.distance >= this.config.wallSafetyMargin) continue;
 
-      // Calculate relative angle to vehicle heading (-PI to +PI)
-      let relAngle = beam.angle - v.heading;
-      while (relAngle > Math.PI) relAngle -= Math.PI * 2;
-      while (relAngle < -Math.PI) relAngle += Math.PI * 2;
+      const toHit = hit.point.sub(v.position);
+      const xLocal = toHit.dot(uForward); // positive = in front, negative = behind
+      const yLocal = toHit.dot(uRight);   // positive = right side, negative = left side
+      const dist = hit.distance;
 
-      const d = hit.distance;
-
-      // Front sector (-25° to +25°)
-      if (Math.abs(relAngle) < (25 * Math.PI) / 180) {
-        if (d < minFrontDist) {
-          minFrontDist = d;
-          if (hit.hitType !== 'none') frontObstacleDetected = true;
-        }
+      // Front proximity (within ±1.4m lateral corridor ahead)
+      if (xLocal > 0 && Math.abs(yLocal) < 1.4) {
+        if (dist < minFrontDist) minFrontDist = dist;
       }
-      // Left sector (+20° to +85°)
-      else if (relAngle > (20 * Math.PI) / 180 && relAngle < (85 * Math.PI) / 180) {
-        if (d < minLeftDist) minLeftDist = d;
-      }
-      // Right sector (-85° to -20°)
-      else if (relAngle < (-20 * Math.PI) / 180 && relAngle > (-85 * Math.PI) / 180) {
-        if (d < minRightDist) minRightDist = d;
+
+      // Lateral wall repulsion: only consider hits along flanks or forward diagonals
+      if (xLocal > -1.5 && Math.abs(yLocal) > 0.4) {
+        const severity = Math.max(0, 1.0 - dist / this.config.wallSafetyMargin);
+        // If obstacle is on RIGHT (yLocal > 0), push LEFT (negative steer)
+        // If obstacle is on LEFT (yLocal < 0), push RIGHT (positive steer)
+        const pushDirection = yLocal > 0 ? -1.0 : 1.0;
+        wallRepulseSteer += pushDirection * severity * 0.8;
       }
     }
 
-    // 2. Autonomous Emergency Braking (AEB) & Adaptive Car-Following
+    wallRepulseSteer = Math.max(-1.0, Math.min(1.0, wallRepulseSteer));
+
+    // 3. Autonomous Emergency Braking (AEB) & Adaptive Car-Following
     let finalThrottle = rawControl.throttle;
     let finalBrake = rawControl.brake;
 
-    // Check distance to lead vehicle in same lane or front radar
     const radarDist = radar.targetDetected ? radar.targetDistance : Infinity;
     const obstacleDist = Math.min(minFrontDist, radarDist);
 
     if (obstacleDist < this.config.emergencyBrakeDistance) {
-      // Urgent collision risk: cut throttle, apply full regenerative/hydraulic brake
+      // Hard AEB emergency stop
       finalThrottle = 0;
       finalBrake = 1.0;
     } else if (obstacleDist < this.config.leadVehicleFollowDistance) {
-      // Car-following rule: decelerate to match lead speed smoothly
-      const speedRatio = Math.max(0, (obstacleDist - this.config.emergencyBrakeDistance) /
-        (this.config.leadVehicleFollowDistance - this.config.emergencyBrakeDistance));
+      // Proactive headway deceleration
+      const speedRatio = Math.max(
+        0,
+        (obstacleDist - this.config.emergencyBrakeDistance) /
+          (this.config.leadVehicleFollowDistance - this.config.emergencyBrakeDistance)
+      );
       finalThrottle = Math.min(finalThrottle, speedRatio * 0.4);
-      if (v.speed > 8.0) {
-        finalBrake = Math.max(finalBrake, 0.45 * (1.0 - speedRatio));
+      if (v.speed > 6.0) {
+        finalBrake = Math.max(finalBrake, 0.5 * (1.0 - speedRatio));
       }
     }
 
-    // 3. Lane Centering Control (Traffic Lane Discipline)
-    const currentLane = track.getLaneIndex(frenet.d);
-    const targetLaneD = track.getLaneCenterD(assignedLaneIndex >= 0 ? assignedLaneIndex : currentLane);
-    const laneOffset = frenet.d - targetLaneD;
-
-    // Proportional-Derivative lane centering torque
-    const laneCenteringSteer = -Math.max(-0.6, Math.min(0.6, laneOffset * 0.45));
-
-    // 4. LiDAR Wall Repulsive Shield (Peretele)
-    let wallEvasionSteer = 0;
-
-    if (minLeftDist < this.config.wallSafetyMargin) {
-      // Wall dangerously close on left -> push firmly to the right
-      const severity = 1.0 - Math.max(0, minLeftDist - this.config.criticalWallDistance) /
-        (this.config.wallSafetyMargin - this.config.criticalWallDistance);
-      wallEvasionSteer += Math.min(1.0, severity * 0.85);
-      finalThrottle *= Math.max(0.2, 1.0 - severity * 0.5);
-    }
-
-    if (minRightDist < this.config.wallSafetyMargin) {
-      // Wall dangerously close on right -> push firmly to the left
-      const severity = 1.0 - Math.max(0, minRightDist - this.config.criticalWallDistance) /
-        (this.config.wallSafetyMargin - this.config.criticalWallDistance);
-      wallEvasionSteer -= Math.min(1.0, severity * 0.85);
-      finalThrottle *= Math.max(0.2, 1.0 - severity * 0.5);
-    }
-
-    // 5. Blend Raw AI Pilot Intent with Safety Governor
-    // AI has full control when the car is centered and safe;
-    // Safety Governor gracefully overrides if the car approaches walls or hazards.
+    // 4. Blend AI Intent with Certified Safety Guidance & Wall Repulsion
     let finalSteer = rawControl.steer;
 
-    if (Math.abs(wallEvasionSteer) > 0.05) {
-      // Priority 1: Do not hit the wall!
-      finalSteer = wallEvasionSteer;
+    if (Math.abs(wallRepulseSteer) > 0.1) {
+      // Priority 1: Imminent wall collision avoidance
+      finalSteer = wallRepulseSteer * 0.75 + laneGuidanceSteer * 0.25;
+      finalThrottle *= 0.5; // Ease throttle when making urgent evasive correction
     } else {
-      // Priority 2: Lane discipline with AI nuance
-      // 60% lane guidance + 40% AI racing line / overtake intent
-      finalSteer = laneCenteringSteer * 0.65 + rawControl.steer * 0.35;
+      // Priority 2: Lane discipline with AI nuance (50% lane guidance + 50% AI racing line / overtake)
+      finalSteer = laneGuidanceSteer * 0.55 + rawControl.steer * 0.45;
     }
 
-    // Traffic Rule ADAS: Double Solid Yellow Centerline Protection (prevent straying into oncoming flow)
-    if (track.isBidirectional && !track.isOncomingLane(assignedLaneIndex)) {
-      const medianD = track.totalWidth * 0.5 - track.oncomingLaneCount * track.laneWidth;
-      if (frenet.d > medianD - 0.9) {
-        // Steer rightward away from oncoming traffic
-        finalSteer = Math.max(finalSteer, 0.5);
+    // Double Solid Yellow Centerline Protection (prevent crossing into oncoming traffic flow)
+    if (track.isBidirectional && !track.isOncomingLane(targetLane)) {
+      const oncomingBoundaryD = track.totalWidth * 0.5 - track.oncomingLaneCount * track.laneWidth;
+      // In Track coords, oncoming lanes have d > oncomingBoundaryD
+      if (frenet.d > oncomingBoundaryD - 0.7) {
+        // Firmly push back towards legal forward lanes
+        finalSteer = Math.min(finalSteer, -0.4);
       }
     }
 

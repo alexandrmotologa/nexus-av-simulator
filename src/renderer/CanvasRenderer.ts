@@ -4,6 +4,7 @@ import { VehicleModel } from '../core/physics/VehicleModel';
 import { LidarSensor } from '../core/sensors/LidarSensor';
 import { Vector2D } from '../core/math/Vector2D';
 import { RoadObstacle } from '../core/world/Obstacle';
+import { RoadSign } from '../core/world/RoadSign';
 
 export interface RenderOptions {
   showLidar: boolean;
@@ -105,8 +106,8 @@ export class CanvasRenderer {
       const vehicle = egoVehicles[i];
       const isLead = vehicle === options.activeFollowVehicle || (options.activeFollowVehicle === null && i === 0);
 
-      // Skip dead/crashed candidates so the track stays clean
-      if (vehicle.state.isDamaged && !isLead) {
+      // Skip dead/crashed candidates so the track stays clean and free of pileups
+      if (vehicle.state.isDamaged && (isMultiFleet || !isLead)) {
         continue;
       }
 
@@ -328,7 +329,10 @@ export class CanvasRenderer {
       this.ctx.setLineDash([]);
     }
 
-    // D. Waypoint handles for track editor
+    // D. Roadside Signage (Speed Limits, Curve Warnings)
+    this.renderRoadSigns(track.signs);
+
+    // E. Waypoint handles for track editor
     if (options.showWaypoints) {
       for (const wp of track.spline.getWaypoints()) {
         this.ctx.beginPath();
@@ -352,6 +356,75 @@ export class CanvasRenderer {
       this.ctx.lineTo(points[i].x, points[i].y);
     }
     this.ctx.stroke();
+  }
+
+  private renderRoadSigns(signs: RoadSign[]): void {
+    if (!signs || signs.length === 0) return;
+
+    for (const sign of signs) {
+      this.ctx.save();
+      this.ctx.translate(sign.position.x, sign.position.y);
+      this.ctx.rotate(sign.heading + Math.PI * 0.5);
+
+      // 1. Post Shadow & Mounting Pole
+      this.ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+      this.ctx.beginPath();
+      this.ctx.arc(0.15, 0.15, 0.4, 0, Math.PI * 2);
+      this.ctx.fill();
+
+      this.ctx.fillStyle = '#64748b';
+      this.ctx.beginPath();
+      this.ctx.arc(0, 0, 0.28, 0, Math.PI * 2);
+      this.ctx.fill();
+
+      // 2. Regulatory Circular Speed Limit Sign (Standard European / International Format)
+      if (sign.speedValue !== undefined) {
+        // Red outer ring
+        this.ctx.fillStyle = '#dc2626';
+        this.ctx.beginPath();
+        this.ctx.arc(0, 0, 1.45, 0, Math.PI * 2);
+        this.ctx.fill();
+
+        // White inner reflective face
+        this.ctx.fillStyle = '#f8fafc';
+        this.ctx.beginPath();
+        this.ctx.arc(0, 0, 1.15, 0, Math.PI * 2);
+        this.ctx.fill();
+
+        // Bold black numeral
+        this.ctx.fillStyle = '#0f172a';
+        this.ctx.font = 'bold 1.15px monospace';
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'middle';
+        this.ctx.fillText(`${sign.speedValue}`, 0, 0.08);
+      } else {
+        // 3. Triangular Curve Warning Sign
+        this.ctx.fillStyle = '#dc2626';
+        this.ctx.beginPath();
+        this.ctx.moveTo(0, -1.5);
+        this.ctx.lineTo(1.4, 1.1);
+        this.ctx.lineTo(-1.4, 1.1);
+        this.ctx.closePath();
+        this.ctx.fill();
+
+        this.ctx.fillStyle = '#fef08a';
+        this.ctx.beginPath();
+        this.ctx.moveTo(0, -1.1);
+        this.ctx.lineTo(1.05, 0.85);
+        this.ctx.lineTo(-1.05, 0.85);
+        this.ctx.closePath();
+        this.ctx.fill();
+
+        // Direction arrow
+        this.ctx.fillStyle = '#0f172a';
+        this.ctx.font = 'bold 0.9px sans-serif';
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'middle';
+        this.ctx.fillText(sign.type === 'SHARP_CURVE_LEFT' ? '◀' : '▶', 0, 0.1);
+      }
+
+      this.ctx.restore();
+    }
   }
 
   private fogOffset: number = 0;
@@ -454,10 +527,60 @@ export class CanvasRenderer {
     this.ctx.fillStyle = '#0f172a';
     this.ctx.fill();
 
-    // 4. Rear Brake Lights
-    this.ctx.fillStyle = v.speed > 0 ? '#ef4444' : '#7f1d1d';
-    this.ctx.fillRect(-halfL, -halfW * 0.8, 0.3, 0.4);
-    this.ctx.fillRect(-halfL, halfW * 0.4, 0.3, 0.4);
+    // 4. Reactive High-Intensity Brake Lights & Asphalt Light Casting
+    const isHardBraking = v.isBraking || (v.speed < -0.1);
+
+    if (isHardBraking && !v.isDamaged) {
+      // Diffuse red brake light reflection cast onto the asphalt surface
+      this.ctx.save();
+      const brakeGlow = this.ctx.createRadialGradient(-halfL - 0.5, 0, 0.3, -halfL - 2.5, 0, 4.2);
+      brakeGlow.addColorStop(0, 'rgba(239, 68, 68, 0.55)');
+      brakeGlow.addColorStop(0.5, 'rgba(239, 68, 68, 0.18)');
+      brakeGlow.addColorStop(1, 'rgba(239, 68, 68, 0)');
+      this.ctx.fillStyle = brakeGlow;
+      this.ctx.beginPath();
+      this.ctx.arc(-halfL - 1.5, 0, 4.2, 0, Math.PI * 2);
+      this.ctx.fill();
+      this.ctx.restore();
+
+      // Radiant High-Intensity LED Brake Lamps
+      this.ctx.fillStyle = '#ff2222';
+      this.ctx.fillRect(-halfL, -halfW * 0.85, 0.35, 0.45);
+      this.ctx.fillRect(-halfL, halfW * 0.4, 0.35, 0.45);
+
+      // Bright white incandescent bulb core
+      this.ctx.fillStyle = '#ffffff';
+      this.ctx.fillRect(-halfL + 0.05, -halfW * 0.75, 0.18, 0.25);
+      this.ctx.fillRect(-halfL + 0.05, halfW * 0.5, 0.18, 0.25);
+    } else {
+      // Standard taillights (running lights)
+      this.ctx.fillStyle = v.speed > 0.5 ? '#b91c1c' : '#7f1d1d';
+      this.ctx.fillRect(-halfL, -halfW * 0.8, 0.3, 0.4);
+      this.ctx.fillRect(-halfL, halfW * 0.4, 0.3, 0.4);
+    }
+
+    // 5. Dynamic Amber Turn Signal Blinkers (1.75 Hz automotive cycle)
+    const blinkCycle = Math.floor(v.blinkTimer * 3.5) % 2 === 0;
+
+    if (!v.isDamaged && blinkCycle) {
+      this.ctx.save();
+      // Left Turn Signal (Front & Rear)
+      if (v.isBlinkingLeft) {
+        // Front Left Blinker
+        this.renderTurnSignalLamp(halfL * 0.88, halfW * 0.9);
+        // Rear Left Blinker
+        this.renderTurnSignalLamp(-halfL * 0.88, halfW * 0.9);
+      }
+
+      // Right Turn Signal (Front & Rear)
+      if (v.isBlinkingRight) {
+        // Front Right Blinker
+        this.renderTurnSignalLamp(halfL * 0.88, -halfW * 0.9);
+        // Rear Right Blinker
+        this.renderTurnSignalLamp(-halfL * 0.88, -halfW * 0.9);
+      }
+      this.ctx.restore();
+    }
 
     // Skidmark generation
     if (v.isSkidding) {
@@ -468,6 +591,24 @@ export class CanvasRenderer {
     }
 
     this.ctx.restore();
+  }
+
+  private renderTurnSignalLamp(x: number, y: number): void {
+    // Luminous amber bloom
+    const glow = this.ctx.createRadialGradient(x, y, 0.05, x, y, 0.85);
+    glow.addColorStop(0, 'rgba(251, 191, 36, 0.9)');
+    glow.addColorStop(0.5, 'rgba(245, 158, 11, 0.4)');
+    glow.addColorStop(1, 'rgba(245, 158, 11, 0)');
+    this.ctx.fillStyle = glow;
+    this.ctx.beginPath();
+    this.ctx.arc(x, y, 0.85, 0, Math.PI * 2);
+    this.ctx.fill();
+
+    // Solid LED diode point
+    this.ctx.fillStyle = '#fef08a';
+    this.ctx.beginPath();
+    this.ctx.arc(x, y, 0.22, 0, Math.PI * 2);
+    this.ctx.fill();
   }
 
   public renderLidar(lidar: LidarSensor): void {

@@ -74,6 +74,12 @@ Surrounding civilian traffic operates autonomously through coupled macroscopic a
 * **IDM (Intelligent Driver Model)**: Calculates longitudinal acceleration based on desired velocity, safe time headway, and minimum spacing.
 * **MOBIL (Minimizing Overall Braking Induced by Lane Changes)**: Evaluates politeness factors and acceleration incentives before executing lane shifts.
 * **Active Hazard Avoidance**: Traffic vehicles detect stopped wrecks and road cones, calculating lane offsets to bypass obstructions safely.
+* **Turn Signals and Brake Halos**: Vehicles engage 1.75 Hz amber turn signal indicators during lane shifts and cast diffuse red brake light reflections onto the road surface during deceleration.
+
+### 4. Certified Safety Shield and Pure Pursuit Kinematics
+* **Waypoint Lookahead**: Evaluates the target lane trajectory via lookahead distance $L_d = \max(8.0, v \cdot 0.9)$ to compute true road curvature and heading error ($\alpha = \theta_{\text{waypoint}} - \theta_{\text{car}}$).
+* **360-Degree LiDAR Repulsion**: Projects LiDAR hit points into the vehicle local frame to calculate lateral distances ($y_{\text{local}}$), generating continuous steering repulsion away from boundaries and obstacles.
+* **Automatic Emergency Braking (AEB)**: Cuts throttle and commands full deceleration when forward headway falls below safety thresholds.
 
 ---
 
@@ -116,6 +122,10 @@ Surrounding civilian traffic operates autonomously through coupled macroscopic a
 
 ## Interactive Features
 
+* **Procedural Web Audio Engine**: Synthesizes real-time vehicle acoustics with zero external sound files using the Web Audio API. Generates velocity-modulated electric motor whine (70 Hz to 850 Hz), dual-tone relay turn signal clicks (1150 Hz / 820 Hz), and dual-frequency ADAS collision alert chimes (880 Hz and 1175 Hz). Includes a quick mute toggle.
+* **Roadside Signage and Speed Limit Compliance**: Renders European circular regulatory signs (50, 80, 90, 120 km/h) and triangular curve warnings on roadside posts. The Cockpit HUD displays the active sector speed limit with real-time legal compliance badges (Legal, At Limit, Overspeed).
+* **Kamm Friction Circle (G-G Diagram)**: Real-time telemetry dial displaying longitudinal acceleration ($a_x$) against lateral acceleration ($a_y$) with 0.5G, 1.0G, and 1.2G concentric tire grip boundaries, dynamic trail vectors, and numeric readouts.
+* **Flight Recorder Black Box and Incident Replay**: Captures a 240-frame (4.0-second) rolling circular buffer of telemetry prior to any collision. A diagnostic replay modal offers 0.5x slow-motion scrubbing, impact telemetry breakdown, and a 2D incident trajectory canvas.
 * **Circuit Radar HUD**: Mini-map tracking ego position, direction vectors, and surrounding traffic in real time. Click anywhere on the radar to pan the viewport.
 * **Free Pan Camera and Vehicle Focus**: Drag canvas to freely inspect the track. Click directly on any car to lock focus onto it. The pulsating Recenter button restores ego tracking.
 * **Interactive Sandbox**: Place reflective traffic cones directly on the asphalt with mouse clicks. Vehicles detect obstacles via LiDAR and steer around them.
@@ -123,6 +133,7 @@ Surrounding civilian traffic operates autonomously through coupled macroscopic a
   * *Dry*: Standard track grip (100%, 8.5 m/s² lateral threshold).
   * *Wet*: Reduced friction (4.5 m/s²), longer braking distances, and animated rain streaks.
   * *Night*: Dark tarmac with high-contrast neon cyan rumble strips and headlight illumination.
+  * *Fog*: Aerosol mist dispersion shortening forward headlight throw and LiDAR penetration.
 * **Brain Model Hub**: Export and import complete neural models (`.json`) for both neuroevolution champions and deep Q-learning policy networks.
 
 ---

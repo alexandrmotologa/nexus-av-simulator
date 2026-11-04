@@ -61,6 +61,9 @@ export class VehicleModel {
     const brake = Math.max(0, Math.min(1, input.brake));
     const dragForce = Math.sign(this.state.speed) * Math.abs(this.state.speed) * this.config.dragCoeff;
 
+    this.state.isBraking = brake > 0.08;
+    this.state.blinkTimer += dt;
+
     let netAccel = 0;
 
     if (this.state.speed >= 0.2) {
@@ -89,6 +92,7 @@ export class VehicleModel {
 
     // Integrate speed within forward and reverse bounds
     this.state.speed += netAccel * dt;
+    this.state.longitudinalAcc = netAccel;
     this.state.speed = Math.max(-this.config.maxReverseSpeed, Math.min(this.config.maxSpeed, this.state.speed));
 
     // 3. Kinematic Bicycle Model equations

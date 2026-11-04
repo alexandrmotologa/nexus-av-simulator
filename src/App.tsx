@@ -7,9 +7,14 @@ import { BrainVisualizer } from './components/BrainVisualizer';
 import { MistakeLearningHUD } from './components/MistakeLearningHUD';
 import { MiniMap } from './components/MiniMap';
 import { AnalyticsDrawer } from './components/AnalyticsDrawer';
+import { GGFrictionCircle } from './components/GGFrictionCircle';
 import { TRACK_PRESETS } from './core/world/TrackPresets';
 import { Vector2D } from './core/math/Vector2D';
 import { VehicleModel } from './core/physics/VehicleModel';
+import { SoundEngine } from './core/audio/SoundEngine';
+import { BlackBoxModal } from './components/BlackBoxModal';
+import { BlackBoxRecorder, IncidentReport } from './core/telemetry/BlackBoxRecorder';
+import { AlertOctagon } from 'lucide-react';
 
 export function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -34,6 +39,10 @@ export function App() {
     obstacleCount: 0,
     fitnessHistory: [],
     leaderboard: [],
+    activeSpeedLimit: 90,
+    speedCompliance: 'OPTIMAL',
+    longitudinalG: 0,
+    isSkidding: false,
   });
 
   const [timeScale, setTimeScale] = useState<number>(1.0);
@@ -49,6 +58,14 @@ export function App() {
   const [sandboxActive, setSandboxActive] = useState<boolean>(false);
   const [obstacleCount, setObstacleCount] = useState<number>(0);
   const [isCameraLocked, setIsCameraLocked] = useState<boolean>(true);
+  const [isMuted, setIsMuted] = useState<boolean>(true); // Audio engine initialized on user click
+  const [activeIncident, setActiveIncident] = useState<IncidentReport | null>(null);
+  const [showBlackBoxModal, setShowBlackBoxModal] = useState<boolean>(false);
+
+  const handleToggleMute = () => {
+    const nextMuted = SoundEngine.getInstance().toggleMute();
+    setIsMuted(nextMuted);
+  };
 
   // Mouse drag tracking refs
   const isMouseDownRef = useRef<boolean>(false);
@@ -162,6 +179,12 @@ export function App() {
       if (timestamp - lastUiUpdate > 66) {
         setTelemetry(engine.getTelemetry());
         setObstacleCount(engine.obstacleManager.obstacles.length);
+
+        const incident = BlackBoxRecorder.getInstance().activeIncident;
+        if (incident && !activeIncident) {
+          setActiveIncident(incident);
+        }
+
         lastUiUpdate = timestamp;
       }
 
@@ -551,12 +574,43 @@ export function App() {
           />
         )}
 
+        <GGFrictionCircle
+          lateralG={telemetry.lateralG}
+          longitudinalG={telemetry.longitudinalG}
+          isSkidding={telemetry.isSkidding}
+        />
+
         <AnalyticsDrawer
           fitnessHistory={telemetry.fitnessHistory || []}
           leaderboard={telemetry.leaderboard || []}
           pilotMode={telemetry.pilotMode}
         />
       </aside>
+
+      {/* Floating Black Box Incident Banner */}
+      {activeIncident && !showBlackBoxModal && (
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-30 pointer-events-auto">
+          <button
+            onClick={() => setShowBlackBoxModal(true)}
+            className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-red-600/95 hover:bg-red-500 text-white font-mono text-xs font-bold shadow-2xl shadow-red-950/60 border border-red-400 animate-pulse transition-all"
+          >
+            <AlertOctagon className="w-4 h-4 text-white" />
+            <span>INCIDENT LOGGED · VIEW BLACK BOX REPLAY</span>
+          </button>
+        </div>
+      )}
+
+      {/* Flight Recorder Incident Diagnostic Modal */}
+      {showBlackBoxModal && activeIncident && (
+        <BlackBoxModal
+          incident={activeIncident}
+          onClose={() => {
+            setShowBlackBoxModal(false);
+            setActiveIncident(null);
+            BlackBoxRecorder.getInstance().clear();
+          }}
+        />
+      )}
 
       {/* Bottom Mission Control Panel */}
       <footer className="absolute bottom-4 left-4 right-4 z-20 pointer-events-auto">
@@ -587,6 +641,8 @@ export function App() {
           onZoomIn={handleZoomIn}
           onZoomOut={handleZoomOut}
           onResetZoom={handleResetZoom}
+          isMuted={isMuted}
+          onToggleMute={handleToggleMute}
         />
       </footer>
     </div>

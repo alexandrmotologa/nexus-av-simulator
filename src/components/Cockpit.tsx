@@ -63,16 +63,52 @@ export const Cockpit: React.FC<CockpitProps> = ({ telemetry, onSetPilotMode }) =
 
       {/* Primary Telemetry Readouts */}
       <div className="flex items-center gap-5 text-slate-200 font-mono text-sm">
-        {/* Speedometer */}
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-full bg-slate-800/80 border border-slate-700 flex items-center justify-center text-sky-400">
-            <Gauge className="w-4 h-4" />
+        {/* Speedometer & Legal Speed Limit Sign */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-full bg-slate-800/80 border border-slate-700 flex items-center justify-center text-sky-400">
+              <Gauge className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-slate-400">Velocity</div>
+              <div className="text-lg font-bold leading-tight">
+                {telemetry.currentBestSpeed}{' '}
+                <span className="text-xs font-normal text-slate-500">km/h</span>
+              </div>
+            </div>
           </div>
-          <div>
-            <div className="text-[10px] uppercase tracking-wider text-slate-400">Velocity</div>
-            <div className="text-lg font-bold leading-tight">
-              {telemetry.currentBestSpeed}{' '}
-              <span className="text-xs font-normal text-slate-500">km/h</span>
+
+          {/* Roadside Speed Limit Sign HUD Indicator */}
+          <div className="flex items-center gap-1.5 pl-2 border-l border-slate-800">
+            <div
+              className={`w-7 h-7 rounded-full border-2 flex items-center justify-center font-bold text-[11px] shadow-md transition-all ${
+                telemetry.speedCompliance === 'SPEEDING'
+                  ? 'border-red-500 bg-red-950/60 text-red-200 animate-pulse ring-2 ring-red-500/50'
+                  : telemetry.speedCompliance === 'WARNING'
+                  ? 'border-amber-500 bg-amber-950/40 text-amber-200'
+                  : 'border-red-500/80 bg-slate-950 text-white'
+              }`}
+              title={`Active Track Sector Speed Limit: ${telemetry.activeSpeedLimit || 90} km/h`}
+            >
+              {telemetry.activeSpeedLimit || 90}
+            </div>
+            <div className="hidden md:block">
+              <div className="text-[9px] uppercase tracking-wider text-slate-500">Limit</div>
+              <div
+                className={`text-[10px] font-bold uppercase tracking-wider ${
+                  telemetry.speedCompliance === 'SPEEDING'
+                    ? 'text-red-400'
+                    : telemetry.speedCompliance === 'WARNING'
+                    ? 'text-amber-400'
+                    : 'text-emerald-400'
+                }`}
+              >
+                {telemetry.speedCompliance === 'SPEEDING'
+                  ? 'Overspeed'
+                  : telemetry.speedCompliance === 'WARNING'
+                  ? 'At Limit'
+                  : 'Legal'}
+              </div>
             </div>
           </div>
         </div>

@@ -301,10 +301,24 @@ export class GeneticEngine {
 
         for (const targetL of candidateLanes) {
           if (this.governor.isLaneChangeSafe(v, this.track, trafficVehicles, targetL)) {
+            if (targetL > agent.assignedLane) {
+              v.state.isBlinkingRight = true;
+              v.state.isBlinkingLeft = false;
+            } else {
+              v.state.isBlinkingLeft = true;
+              v.state.isBlinkingRight = false;
+            }
             agent.assignedLane = targetL;
             break;
           }
         }
+      }
+
+      // Deactivate blinker once settled into the assigned lane
+      const currentAssignedD = this.track.getLaneCenterD(agent.assignedLane);
+      if (Math.abs(frenet.d - currentAssignedD) < 0.4) {
+        v.state.isBlinkingLeft = false;
+        v.state.isBlinkingRight = false;
       }
 
       // 3c. Apply Automotive Safety Shield (LiDAR Wall Repulsion + Lane Centering + AEB)
@@ -326,6 +340,7 @@ export class GeneticEngine {
       // 4. Hard Barrier / Wall Collision check
       const hitBarrier = v.enforceTrackBoundary(this.track);
       if (hitBarrier) {
+        v.state.isDamaged = true;
         agent.isAlive = false;
         agent.stats.crashes++;
         agent.fitness -= 60.0;
@@ -362,11 +377,11 @@ export class GeneticEngine {
         }
       }
 
-      // Anti-stalling / Parking Watchdog: eliminate cars that refuse to drive forward
+      // Anti-stalling / Wall-Scraping Watchdog: eliminate cars that linger or crawl under 2.5 m/s (~9 km/h)
       if (agent.isAlive) {
-        if (v.state.speed < 1.5) {
+        if (v.state.speed < 2.5) {
           agent.stalledFrames++;
-          if (agent.stalledFrames > 300) {
+          if (agent.stalledFrames > 120) {
             v.state.isDamaged = true;
             agent.isAlive = false;
             agent.fitness -= 100.0;

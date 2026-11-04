@@ -1,6 +1,7 @@
 import { Vector2D } from '../math/Vector2D';
 import { CatmullRomSpline } from '../math/Spline';
 import { FrenetConverter } from '../math/Frenet';
+import { RoadSign, RoadSignType } from './RoadSign';
 
 export type LaneDividerType = 'DASHED_WHITE' | 'SOLID_WHITE' | 'DOUBLE_SOLID_YELLOW';
 
@@ -35,6 +36,7 @@ export class Track {
   public laneDividers: Vector2D[][] = [];
   public laneDividerDetails: LaneDividerInfo[] = [];
   public samplePoints: Vector2D[] = [];
+  public signs: RoadSign[] = [];
 
   public get centerLine(): Vector2D[] {
     return this.samplePoints.length > 0 ? this.samplePoints : this.spline.getWaypoints();
@@ -79,6 +81,7 @@ export class Track {
     this.laneDividers = [];
     this.laneDividerDetails = [];
     this.samplePoints = [];
+    this.signs = [];
 
     for (let l = 1; l < this.laneCount; l++) {
       this.laneDividers.push([]);
@@ -120,6 +123,98 @@ export class Track {
         points: this.laneDividers[l - 1],
       });
     }
+
+    this.generateRoadSigns();
+  }
+
+  /**
+   * Generates realistic roadside signage along track margins (speed limits, curve warnings, no-overtake).
+   */
+  private generateRoadSigns(): void {
+    const length = this.spline.totalLength;
+    if (length < 80) return;
+
+    this.signs = [];
+    const roadsideD = -(this.totalWidth * 0.5 + 2.2); // Right side shoulder
+
+    // 1. Initial sector speed limit
+    const initialLimit: RoadSignType = this.isBidirectional ? 'SPEED_LIMIT_80' : 'SPEED_LIMIT_90';
+    const initialPos = this.frenet.frenetToCartesian(30.0, roadsideD);
+    this.signs.push({
+      id: 'sign-start-speed',
+      type: initialLimit,
+      s: 30.0,
+      position: initialPos.position,
+      heading: initialPos.heading,
+      speedValue: this.isBidirectional ? 80 : 90,
+    });
+
+    // 2. Sample track curvature to place warning and reduction signs before tight corners
+    const interval = 120.0;
+    const signCount = Math.floor(length / interval);
+
+    for (let i = 1; i < signCount; i++) {
+      const s = i * interval;
+      const state = this.spline.evaluateAtDistance(s + 35.0);
+      const isSharpCurve = Math.abs(state.curvature) > 0.012;
+
+      const signPos = this.frenet.frenetToCartesian(s, roadsideD);
+
+      if (isSharpCurve) {
+        // Warning sign 35m before the curve
+        this.signs.push({
+          id: `sign-curve-${i}`,
+          type: state.curvature > 0 ? 'SHARP_CURVE_LEFT' : 'SHARP_CURVE_RIGHT',
+          s,
+          position: signPos.position,
+          heading: signPos.heading,
+        });
+
+        // 50 km/h reduction sign
+        const speed50Pos = this.frenet.frenetToCartesian(s + 15.0, roadsideD);
+        this.signs.push({
+          id: `sign-speed50-${i}`,
+          type: 'SPEED_LIMIT_50',
+          s: s + 15.0,
+          position: speed50Pos.position,
+          heading: speed50Pos.heading,
+          speedValue: 50,
+        });
+      } else {
+        // High-speed cruise segment
+        const limit = (i % 2 === 0) ? 120 : 80;
+        this.signs.push({
+          id: `sign-speed-${i}`,
+          type: limit === 120 ? 'SPEED_LIMIT_120' : 'SPEED_LIMIT_80',
+          s,
+          position: signPos.position,
+          heading: signPos.heading,
+          speedValue: limit,
+        });
+      }
+    }
+  }
+
+  /**
+   * Evaluates the legal speed limit at distance s along the track
+   */
+  public getSpeedLimitAtDistance(s: number): number {
+    const speedSigns = this.signs.filter((sign) => sign.speedValue !== undefined);
+    if (speedSigns.length === 0) return 90;
+
+    let activeLimit = speedSigns[0].speedValue || 90;
+    let closestPastDist = Infinity;
+
+    for (const sign of speedSigns) {
+      let delta = s - sign.s;
+      if (this.closed && delta < 0) delta += this.spline.totalLength;
+      if (delta >= 0 && delta < closestPastDist) {
+        closestPastDist = delta;
+        activeLimit = sign.speedValue || 90;
+      }
+    }
+
+    return activeLimit;
   }
 
   /** Whether the given lane is on the oncoming side of traffic */
