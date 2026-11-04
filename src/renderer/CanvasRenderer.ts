@@ -99,6 +99,12 @@ export class CanvasRenderer {
     for (let i = 0; i < egoVehicles.length; i++) {
       const vehicle = egoVehicles[i];
       const isLead = vehicle === options.activeFollowVehicle || i === 0;
+
+      // Skip dead/crashed candidates so the starting grid stays clean and visible
+      if (vehicle.state.isDamaged && !isLead) {
+        continue;
+      }
+
       this.renderVehicle(vehicle, isLead);
 
       // Render LiDAR for the active follow car

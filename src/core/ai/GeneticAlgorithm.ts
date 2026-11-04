@@ -74,7 +74,7 @@ export class GeneticEngine {
       const raw = localStorage.getItem('nexus_av_ga_champion');
       if (!raw) return false;
       const json = JSON.parse(raw);
-      if (json && json.layers) {
+      if (json && json.layers && (json.fitness ?? 0) > 20.0) {
         this.bestBrainEver = NeuralNetwork.fromJSON(json);
         if (this.population.length > 0) {
           this.population[0].brain = this.bestBrainEver.clone();
@@ -119,6 +119,7 @@ export class GeneticEngine {
         startPoint.pos,
         startPoint.heading
       );
+      vehicle.state.speed = 10.0; // rolling start (~36 km/h)
 
       const agent: NeuralAgent = {
         id: `agent-${i}`,
@@ -165,6 +166,7 @@ export class GeneticEngine {
     for (let i = 0; i < this.population.length; i++) {
       const agent = this.population[i];
       agent.vehicle.reset(startPoint.pos, startPoint.heading);
+      agent.vehicle.state.speed = 10.0; // rolling start
       agent.isAlive = true;
       agent.fitness = 0;
       agent.lastS = 10.0;
@@ -235,10 +237,27 @@ export class GeneticEngine {
       inputs[22] = normalizedOffset;
       inputs[23] = rearThreat;
 
-      // 3. Brain Inference
+      // 3. Brain Inference: Decoupled Throttle & Braking
       const outputs = agent.brain.feedForward(inputs);
-      const throttle = Math.max(0, Math.min(1, (outputs[0] + 1) * 0.5));
-      const brake = Math.max(0, Math.min(1, (outputs[1] + 1) * 0.5));
+      let throttle = 0;
+      let brake = 0;
+
+      // outputs[0]: Longitudinal drive (-1 full brake to +1 full throttle)
+      if (outputs[0] >= 0) {
+        throttle = outputs[0];
+        brake = 0;
+      } else {
+        throttle = 0;
+        brake = -outputs[0];
+      }
+
+      // outputs[1]: High-confidence emergency obstacle brake
+      if (outputs[1] > 0.5) {
+        brake = Math.max(brake, outputs[1]);
+        throttle = 0;
+      }
+
+      // outputs[2]: Continuous steering angle (-1 left to +1 right)
       const steer = Math.max(-1, Math.min(1, outputs[2]));
 
       const controlInput: ControlInput = { throttle, brake, steer };
@@ -270,33 +289,11 @@ export class GeneticEngine {
         }
       }
 
-      // Check collision between peer AI population agents
+      // Anti-stalling / Parking Watchdog: eliminate cars that refuse to drive forward
       if (agent.isAlive) {
-        for (const other of this.population) {
-          if (other === agent || !other.isAlive) continue;
-          const dist = v.state.position.distance(other.vehicle.state.position);
-          if (dist < 4.8) {
-            const touched = dist < 3.8 || Collision.checkPolygonCollision(v.state.polygon, other.vehicle.state.polygon);
-            if (touched) {
-              v.state.isDamaged = true;
-              other.vehicle.state.isDamaged = true;
-              agent.isAlive = false;
-              other.isAlive = false;
-              agent.stats.crashes++;
-              other.stats.crashes++;
-              agent.fitness -= 85.0;
-              other.fitness -= 85.0;
-              break;
-            }
-          }
-        }
-      }
-
-      // Anti-stalling / Parking Watchdog: eliminate cars that stand still to cheat death!
-      if (agent.isAlive) {
-        if (v.state.speed < 1.2) {
+        if (v.state.speed < 1.5) {
           agent.stalledFrames++;
-          if (agent.stalledFrames > 85) {
+          if (agent.stalledFrames > 120) {
             v.state.isDamaged = true;
             agent.isAlive = false;
             agent.fitness -= 100.0;
@@ -425,10 +422,13 @@ export class GeneticEngine {
       const agent = this.population[i];
       agent.brain = nextBrains[i] || this.createDefaultBrain();
       agent.vehicle.reset(startPoint.pos, startPoint.heading);
+      agent.vehicle.state.speed = 10.0; // rolling start
       agent.vehicle.config.color = i === 0 ? '#10b981' : i < this.elitismCount ? '#f59e0b' : '#ef4444';
       agent.isAlive = true;
       agent.fitness = 0;
       agent.lastS = 10.0;
+      agent.stalledFrames = 0;
+      agent.deadTimer = 0;
       agent.overtakenVehicles.clear();
       agent.stats = {
         distance: 0,
