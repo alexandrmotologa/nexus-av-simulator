@@ -2,6 +2,7 @@ import { Vector2D } from '../math/Vector2D';
 import { Collision } from '../math/Collision';
 import { VehicleModel } from '../physics/VehicleModel';
 import { Track } from '../world/Track';
+import { RoadObstacle } from '../world/Obstacle';
 
 export interface LidarBeamHit {
   point: Vector2D;
@@ -38,7 +39,12 @@ export class LidarSensor {
    * Casts 360° LiDAR beams covering front, flanks, and rear blind-spots
    * against track boundaries and surrounding traffic vehicles.
    */
-  public update(egoVehicle: VehicleModel, track: Track, otherVehicles: VehicleModel[]): void {
+  public update(
+    egoVehicle: VehicleModel,
+    track: Track,
+    otherVehicles: VehicleModel[],
+    obstacles: RoadObstacle[] = []
+  ): void {
     const origin = egoVehicle.state.position;
     const heading = egoVehicle.state.heading;
 
@@ -101,6 +107,17 @@ export class LidarSensor {
               targetVehicleId = other.config.id;
             }
           }
+        }
+      }
+
+      // 4. Raycast against dynamic Sandbox Obstacles (Cones & Roadblocks)
+      for (const obs of obstacles) {
+        const hitDist = Collision.rayCircleIntersection(origin, rayEnd, obs.position, obs.radius);
+        if (hitDist !== null && hitDist < closestDist) {
+          closestDist = hitDist;
+          closestHitPoint = origin.add(rayDir.scale(hitDist));
+          hitType = 'vehicle';
+          targetVehicleId = obs.id;
         }
       }
 

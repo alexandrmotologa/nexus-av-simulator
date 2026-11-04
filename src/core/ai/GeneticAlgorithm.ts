@@ -6,6 +6,7 @@ import { Track } from '../world/Track';
 import { Vector2D } from '../math/Vector2D';
 import { ControlInput } from '../physics/VehicleState';
 import { Collision } from '../math/Collision';
+import { RoadObstacle } from '../world/Obstacle';
 
 export interface AgentFitnessStats {
   distance: number;
@@ -188,7 +189,7 @@ export class GeneticEngine {
   /**
    * Updates all agents, executes 360° perception, enforces barrier physics, anti-reverse checks, and updates fitness.
    */
-  public update(dt: number, trafficVehicles: VehicleModel[]): void {
+  public update(dt: number, trafficVehicles: VehicleModel[], obstacles: RoadObstacle[] = []): void {
     let aliveCount = 0;
 
     for (const agent of this.population) {
@@ -197,8 +198,8 @@ export class GeneticEngine {
       aliveCount++;
       const v = agent.vehicle;
 
-      // 1. Senses: 360° LiDAR + Front/Rear Radar
-      agent.sensor.update(v, this.track, trafficVehicles);
+      // 1. Senses: 360° LiDAR + Front/Rear Radar (including sandbox obstacles)
+      agent.sensor.update(v, this.track, trafficVehicles, obstacles);
       agent.radar.update(v, this.track, trafficVehicles);
       const lidarReadings = agent.sensor.getReadings();
 
@@ -272,7 +273,7 @@ export class GeneticEngine {
         continue;
       }
 
-      // 4. Physical Vehicle-to-Vehicle Collision Check (SAT polygon / Bumper Touch)
+      // 5. Physical Vehicle-to-Vehicle Collision Check (SAT polygon / Bumper Touch)
       for (const t of trafficVehicles) {
         if (t.state.isDamaged && t.state.speed < 0.1) continue;
         const dist = v.state.position.distance(t.state.position);
@@ -284,6 +285,19 @@ export class GeneticEngine {
             agent.isAlive = false;
             agent.stats.crashes++;
             agent.fitness -= 85.0;
+            break;
+          }
+        }
+      }
+
+      // 6. Collision with Sandbox Road Hazards (Traffic Cones & Barriers)
+      if (agent.isAlive) {
+        for (const obs of obstacles) {
+          if (v.state.position.distance(obs.position) < obs.radius + 1.8) {
+            v.state.isDamaged = true;
+            agent.isAlive = false;
+            agent.stats.crashes++;
+            agent.fitness -= 90.0;
             break;
           }
         }
@@ -442,5 +456,35 @@ export class GeneticEngine {
     }
 
     this.generation++;
+  }
+
+  public exportBestBrain(): any {
+    const brain = this.bestBrainEver || this.bestAgent?.brain || this.population[0]?.brain;
+    if (!brain) return null;
+    return {
+      type: 'NEUROEVOLUTION',
+      version: 1,
+      generation: this.generation,
+      bestFitness: parseFloat(this.bestFitness.toFixed(1)),
+      brain: brain.toJSON(),
+      timestamp: Date.now(),
+    };
+  }
+
+  public importBrain(data: any): boolean {
+    try {
+      if (data && data.brain) {
+        const net = NeuralNetwork.fromJSON(data.brain);
+        this.bestBrainEver = net;
+        // Inject into top elite agents
+        for (let i = 0; i < Math.min(6, this.population.length); i++) {
+          this.population[i].brain = net.clone();
+        }
+        return true;
+      }
+    } catch (e) {
+      console.warn('Failed to import brain:', e);
+    }
+    return false;
   }
 }

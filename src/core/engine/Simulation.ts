@@ -7,8 +7,20 @@ import { DeepQLearningAgent, QLearningStats } from '../ai/DeepQLearning';
 import { VehicleModel } from '../physics/VehicleModel';
 import { RadarSensor } from '../sensors/RadarSensor';
 import { LidarSensor } from '../sensors/LidarSensor';
+import { ObstacleManager, RoadObstacle } from '../world/Obstacle';
 
 export type PilotMode = 'NEUROEVOLUTION' | 'DEEP_RL_AGENT' | 'CLASSIC_ROBOTICS' | 'HUMAN_DRIVER';
+export type WeatherMode = 'DRY' | 'WET' | 'NIGHT';
+
+export interface LeaderboardEntry {
+  rank: number;
+  name: string;
+  speed: number;
+  distance: number;
+  fitness: number;
+  overtakes: number;
+  color: string;
+}
 
 export interface SimulationTelemetry {
   pilotMode: PilotMode;
@@ -24,6 +36,10 @@ export interface SimulationTelemetry {
   fps: number;
   timeScale: number;
   rlStats?: QLearningStats;
+  weather: WeatherMode;
+  obstacleCount: number;
+  fitnessHistory: { gen: number; fitness: number; speed: number }[];
+  leaderboard: LeaderboardEntry[];
 }
 
 export class SimulationEngine {
@@ -41,6 +57,10 @@ export class SimulationEngine {
   public timeScale: number = 1.0; // 0 = pause, 1 = normal, 5 = fast
   public trafficCount: number = 8;
   public keysPressed: Set<string> = new Set();
+  public obstacleManager: ObstacleManager = new ObstacleManager();
+  public weather: WeatherMode = 'DRY';
+  public fitnessHistory: { gen: number; fitness: number; speed: number }[] = [];
+  private lastRecordedGen: number = 1;
 
   private lastTime: number = 0;
   private fpsCounter: number = 60;
@@ -85,6 +105,28 @@ export class SimulationEngine {
     const start = this.geneticEngine.getStartPosition();
     this.classicVehicle.reset(start.pos, start.heading);
     this.humanVehicle.reset(start.pos, start.heading);
+  }
+
+  public setWeather(mode: WeatherMode): void {
+    this.weather = mode;
+    const grip = mode === 'WET' ? 4.5 : 8.5;
+    const brake = mode === 'WET' ? 6.0 : 9.5;
+
+    this.classicVehicle.config.tireGripCoeff = grip;
+    this.classicVehicle.config.brakeDecel = brake;
+    this.humanVehicle.config.tireGripCoeff = grip;
+    this.humanVehicle.config.brakeDecel = brake;
+    this.rlAgent.vehicle.config.tireGripCoeff = grip;
+    this.rlAgent.vehicle.config.brakeDecel = brake;
+
+    for (const a of this.geneticEngine.population) {
+      a.vehicle.config.tireGripCoeff = grip;
+      a.vehicle.config.brakeDecel = brake;
+    }
+    for (const t of this.trafficManager.agents) {
+      t.vehicle.config.tireGripCoeff = grip;
+      t.vehicle.config.brakeDecel = brake;
+    }
   }
 
   public setTrafficDensity(count: number): void {
@@ -135,8 +177,9 @@ export class SimulationEngine {
 
   private stepPhysics(dt: number): void {
     const trafficVehicles = this.trafficManager.getVehicles();
+    const obstacles = this.obstacleManager.obstacles;
 
-    // 1. Update Traffic NPCs with knowledge of active ego car
+    // 1. Update Traffic NPCs with knowledge of active ego car & obstacles
     let activeEgo: VehicleModel | undefined = undefined;
     if (this.pilotMode === 'NEUROEVOLUTION') {
       activeEgo = this.geneticEngine.bestAgent?.vehicle;
@@ -148,13 +191,25 @@ export class SimulationEngine {
       activeEgo = this.humanVehicle;
     }
 
-    this.trafficManager.update(dt, activeEgo);
+    this.trafficManager.update(dt, activeEgo, obstacles);
 
     // 2. Update Active Mode
     if (this.pilotMode === 'NEUROEVOLUTION') {
-      this.geneticEngine.update(dt, trafficVehicles);
+      this.geneticEngine.update(dt, trafficVehicles, obstacles);
+
+      // Record fitness history when new generation starts
+      if (this.geneticEngine.generation > this.lastRecordedGen) {
+        this.lastRecordedGen = this.geneticEngine.generation;
+        const bestSpeed = this.geneticEngine.bestAgent ? this.geneticEngine.bestAgent.vehicle.state.speed * 3.6 : 0;
+        this.fitnessHistory.push({
+          gen: this.geneticEngine.generation - 1,
+          fitness: Math.round(this.geneticEngine.bestFitness),
+          speed: Math.round(bestSpeed),
+        });
+        if (this.fitnessHistory.length > 50) this.fitnessHistory.shift();
+      }
     } else if (this.pilotMode === 'DEEP_RL_AGENT') {
-      this.rlAgent.step(dt, this.track, trafficVehicles);
+      this.rlAgent.step(dt, this.track, trafficVehicles, obstacles);
     } else if (this.pilotMode === 'CLASSIC_ROBOTICS') {
       this.classicRadar.update(this.classicVehicle, this.track, trafficVehicles);
       const control = this.classicController.compute(
@@ -164,9 +219,14 @@ export class SimulationEngine {
       );
       this.classicVehicle.step(control, dt);
 
-      // Check collision with track boundary
+      // Check collision with track boundary & obstacles
       if (!this.track.isPointOnRoad(this.classicVehicle.state.position)) {
         this.classicVehicle.state.isDamaged = true;
+      }
+      for (const obs of obstacles) {
+        if (this.classicVehicle.state.position.distance(obs.position) < obs.radius + 1.8) {
+          this.classicVehicle.state.isDamaged = true;
+        }
       }
     } else if (this.pilotMode === 'HUMAN_DRIVER') {
       // Manual Keyboard Input: W = Accelerate, S = Brake / Reverse, A/D = Steer, R = Reset
@@ -182,17 +242,23 @@ export class SimulationEngine {
       if (this.keysPressed.has('KeyD') || this.keysPressed.has('ArrowRight')) steer += 1.0;
 
       this.humanVehicle.step({ throttle, brake, steer }, dt);
-      this.humanLidar.update(this.humanVehicle, this.track, trafficVehicles);
+      this.humanLidar.update(this.humanVehicle, this.track, trafficVehicles, obstacles);
 
-      // Enforce physical barrier collisions (guardrail keeps car on track and allows reversing out)
+      // Enforce physical barrier collisions
       this.humanVehicle.enforceTrackBoundary(this.track);
+
+      for (const obs of obstacles) {
+        if (this.humanVehicle.state.position.distance(obs.position) < obs.radius + 1.8) {
+          this.humanVehicle.state.isDamaged = true;
+        }
+      }
     }
   }
 
   /** Headless hyper-speed batch training (evaluates N generations in pure CPU loop) */
   public runHeadlessGenerations(generationsToRun: number): void {
-    const dt = 0.033; // 30Hz simulation steps
-    const maxFramesPerGen = 1200;
+    const dt = 0.05; // 20Hz simulation steps for fast evaluation
+    const maxFramesPerGen = 220;
 
     for (let g = 0; g < generationsToRun; g++) {
       let frames = 0;
@@ -210,7 +276,15 @@ export class SimulationEngine {
         frames++;
       }
       if (this.pilotMode === 'NEUROEVOLUTION') {
+        const bestSpeed = this.geneticEngine.bestAgent ? this.geneticEngine.bestAgent.vehicle.state.speed * 3.6 : 0;
+        this.fitnessHistory.push({
+          gen: this.geneticEngine.generation,
+          fitness: Math.round(this.geneticEngine.bestFitness),
+          speed: Math.round(bestSpeed),
+        });
+        if (this.fitnessHistory.length > 50) this.fitnessHistory.shift();
         this.geneticEngine.evolveNextGeneration();
+        this.lastRecordedGen = this.geneticEngine.generation;
       }
     }
   }
@@ -254,6 +328,23 @@ export class SimulationEngine {
       latG = v.lateralAcc / 9.81;
     }
 
+    const leaderboard: LeaderboardEntry[] = [];
+    if (this.pilotMode === 'NEUROEVOLUTION') {
+      const sorted = [...this.geneticEngine.population].sort((a, b) => b.fitness - a.fitness);
+      for (let i = 0; i < Math.min(5, sorted.length); i++) {
+        const agent = sorted[i];
+        leaderboard.push({
+          rank: i + 1,
+          name: agent.vehicle.config.name,
+          speed: Math.round(agent.vehicle.state.speed * 3.6),
+          distance: Math.round(agent.stats.distance),
+          fitness: Math.round(agent.fitness),
+          overtakes: agent.stats.overtakes,
+          color: agent.vehicle.config.color,
+        });
+      }
+    }
+
     return {
       pilotMode: this.pilotMode,
       trackName: this.track.name,
@@ -268,6 +359,50 @@ export class SimulationEngine {
       fps: this.fpsCounter,
       timeScale: this.timeScale,
       rlStats: this.rlAgent.getStats(),
+      weather: this.weather,
+      obstacleCount: this.obstacleManager.obstacles.length,
+      fitnessHistory: this.fitnessHistory,
+      leaderboard,
     };
+  }
+
+  public exportBrain(): any {
+    if (this.pilotMode === 'DEEP_RL_AGENT') {
+      return {
+        type: 'DEEP_RL_AGENT',
+        version: 1,
+        weights: this.rlAgent.policyNet.serialize(),
+        totalSteps: this.rlAgent.totalSteps,
+        totalMistakes: this.rlAgent.totalMistakes,
+        mistakesAvoided: this.rlAgent.mistakesAvoided,
+        timestamp: Date.now(),
+      };
+    }
+    return this.geneticEngine.exportBestBrain();
+  }
+
+  public importBrain(data: any): boolean {
+    if (!data) return false;
+    if (data.type === 'DEEP_RL_AGENT' || data.weights) {
+      if (data.weights) {
+        this.rlAgent.policyNet.deserialize(data.weights);
+        this.rlAgent.targetNet.copyFrom(this.rlAgent.policyNet);
+        if (data.totalSteps) this.rlAgent.totalSteps = data.totalSteps;
+        if (data.totalMistakes) this.rlAgent.totalMistakes = data.totalMistakes;
+        if (data.mistakesAvoided) this.rlAgent.mistakesAvoided = data.mistakesAvoided;
+        this.rlAgent.saveToStorage();
+        if (this.pilotMode !== 'DEEP_RL_AGENT') {
+          this.setPilotMode('DEEP_RL_AGENT');
+        }
+        return true;
+      }
+    } else if (data.type === 'NEUROEVOLUTION' || data.brain) {
+      const res = this.geneticEngine.importBrain(data);
+      if (res && this.pilotMode !== 'NEUROEVOLUTION') {
+        this.setPilotMode('NEUROEVOLUTION');
+      }
+      return res;
+    }
+    return false;
   }
 }

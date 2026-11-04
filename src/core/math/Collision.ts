@@ -53,6 +53,36 @@ export class Collision {
   }
 
   /**
+   * Ray vs circle intersection test.
+   * Returns distance from ray origin to nearest intersection point, or null if no hit.
+   */
+  static rayCircleIntersection(
+    rayOrigin: Vector2D,
+    rayEnd: Vector2D,
+    circleCenter: Vector2D,
+    circleRadius: number
+  ): number | null {
+    const rayDir = rayEnd.sub(rayOrigin);
+    const maxDist = rayDir.magnitude();
+    if (maxDist < 1e-4) return null;
+    const d = rayDir.scale(1 / maxDist);
+
+    const f = rayOrigin.sub(circleCenter);
+    const b = 2 * f.dot(d);
+    const c = f.dot(f) - circleRadius * circleRadius;
+    const discriminant = b * b - 4 * c;
+
+    if (discriminant < 0) return null;
+    const sqrtDisc = Math.sqrt(discriminant);
+    const t1 = (-b - sqrtDisc) / 2;
+    const t2 = (-b + sqrtDisc) / 2;
+
+    if (t1 >= 0 && t1 <= maxDist) return t1;
+    if (t2 >= 0 && t2 <= maxDist) return t2;
+    return null;
+  }
+
+  /**
    * Separating Axis Theorem (SAT) for checking overlap between two 2D convex polygons.
    * Returns true if polyA and polyB collide.
    */

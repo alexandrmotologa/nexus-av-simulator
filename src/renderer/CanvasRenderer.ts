@@ -3,6 +3,7 @@ import { Track } from '../core/world/Track';
 import { VehicleModel } from '../core/physics/VehicleModel';
 import { LidarSensor } from '../core/sensors/LidarSensor';
 import { Vector2D } from '../core/math/Vector2D';
+import { RoadObstacle } from '../core/world/Obstacle';
 
 export interface RenderOptions {
   showLidar: boolean;
@@ -10,6 +11,8 @@ export interface RenderOptions {
   showWaypoints: boolean;
   showTrails: boolean;
   activeFollowVehicle: VehicleModel | null;
+  obstacles?: RoadObstacle[];
+  weather?: 'DRY' | 'WET' | 'NIGHT';
 }
 
 export class CanvasRenderer {
@@ -17,6 +20,7 @@ export class CanvasRenderer {
   private ctx: CanvasRenderingContext2D;
   public camera: Camera;
   private skidmarks: { p1: Vector2D; p2: Vector2D; alpha: number }[] = [];
+  private rainDrops: { x: number; y: number; l: number; s: number }[] = [];
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -113,6 +117,111 @@ export class CanvasRenderer {
       }
     }
 
+    // 5. Render Dynamic Sandbox Hazards (Cones & Barriers)
+    if (options.obstacles) {
+      for (const obs of options.obstacles) {
+        this.renderObstacle(obs);
+      }
+    }
+
+    this.ctx.restore();
+
+    // 6. Weather Screen Effects (Rain Streaks)
+    if (options.weather === 'WET') {
+      this.renderRainEffect();
+    }
+  }
+
+  private renderObstacle(obs: RoadObstacle): void {
+    this.ctx.save();
+    this.ctx.translate(obs.position.x, obs.position.y);
+
+    if (obs.type === 'cone') {
+      // Traffic Cone: Drop shadow
+      this.ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+      this.ctx.beginPath();
+      this.ctx.ellipse(0.3, 0.3, obs.radius * 1.1, obs.radius * 0.7, 0, 0, Math.PI * 2);
+      this.ctx.fill();
+
+      // Outer orange base
+      this.ctx.fillStyle = '#ea580c';
+      this.ctx.beginPath();
+      this.ctx.arc(0, 0, obs.radius, 0, Math.PI * 2);
+      this.ctx.fill();
+      this.ctx.strokeStyle = '#c2410c';
+      this.ctx.lineWidth = 0.2;
+      this.ctx.stroke();
+
+      // Middle reflective white band
+      this.ctx.fillStyle = '#ffffff';
+      this.ctx.beginPath();
+      this.ctx.arc(0, 0, obs.radius * 0.65, 0, Math.PI * 2);
+      this.ctx.fill();
+
+      // Inner orange cone tip
+      this.ctx.fillStyle = '#f97316';
+      this.ctx.beginPath();
+      this.ctx.arc(0, 0, obs.radius * 0.35, 0, Math.PI * 2);
+      this.ctx.fill();
+    } else {
+      // Heavy Concrete / Hazard Barrier
+      this.ctx.rotate(obs.heading);
+      const w = 4.2;
+      const h = 1.6;
+      this.ctx.fillStyle = '#eab308'; // Warning yellow
+      this.ctx.fillRect(-w * 0.5, -h * 0.5, w, h);
+
+      // Black hazard diagonal stripes
+      this.ctx.strokeStyle = '#0f172a';
+      this.ctx.lineWidth = 0.5;
+      for (let x = -w * 0.5 + 0.4; x < w * 0.5; x += 0.8) {
+        this.ctx.beginPath();
+        this.ctx.moveTo(x, -h * 0.5);
+        this.ctx.lineTo(x + 0.4, h * 0.5);
+        this.ctx.stroke();
+      }
+
+      this.ctx.strokeStyle = '#ca8a04';
+      this.ctx.lineWidth = 0.15;
+      this.ctx.strokeRect(-w * 0.5, -h * 0.5, w, h);
+    }
+
+    this.ctx.restore();
+  }
+
+  private renderRainEffect(): void {
+    const dpr = window.devicePixelRatio || 1;
+    const w = this.canvas.width / dpr;
+    const h = this.canvas.height / dpr;
+
+    if (this.rainDrops.length < 90) {
+      for (let i = 0; i < 90; i++) {
+        this.rainDrops.push({
+          x: Math.random() * w,
+          y: Math.random() * h,
+          l: 12 + Math.random() * 18,
+          s: 16 + Math.random() * 14,
+        });
+      }
+    }
+
+    this.ctx.save();
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // Screen space
+    this.ctx.strokeStyle = 'rgba(186, 230, 253, 0.28)';
+    this.ctx.lineWidth = 1.2;
+
+    this.ctx.beginPath();
+    for (const drop of this.rainDrops) {
+      drop.y += drop.s;
+      drop.x -= drop.s * 0.25;
+      if (drop.y > h) {
+        drop.y = -20;
+        drop.x = Math.random() * (w + 100);
+      }
+      this.ctx.moveTo(drop.x, drop.y);
+      this.ctx.lineTo(drop.x - drop.l * 0.25, drop.y + drop.l);
+    }
+    this.ctx.stroke();
     this.ctx.restore();
   }
 
@@ -121,29 +230,30 @@ export class CanvasRenderer {
 
     this.ctx.save();
 
+    const isNight = options.weather === 'NIGHT';
+    const isWet = options.weather === 'WET';
+
     // A. Asphalt road surface polygon
     this.ctx.beginPath();
-    // Trace left boundary forward
     this.ctx.moveTo(track.leftBoundary[0].x, track.leftBoundary[0].y);
     for (let i = 1; i < track.leftBoundary.length; i++) {
       this.ctx.lineTo(track.leftBoundary[i].x, track.leftBoundary[i].y);
     }
-    // Trace right boundary backward to form a closed ribbon polygon
     for (let i = track.rightBoundary.length - 1; i >= 0; i--) {
       this.ctx.lineTo(track.rightBoundary[i].x, track.rightBoundary[i].y);
     }
     this.ctx.closePath();
-    this.ctx.fillStyle = '#1e293b'; // Slate asphalt
+    this.ctx.fillStyle = isNight ? '#0a0e1a' : isWet ? '#111827' : '#1e293b';
     this.ctx.fill();
 
     // B. Road Margins / Curbs
-    this.ctx.strokeStyle = '#f8fafc'; // Crisp white road edge
+    this.ctx.strokeStyle = isNight ? '#38bdf8' : '#f8fafc';
     this.ctx.lineWidth = 0.45;
     this.renderPolyline(track.leftBoundary);
     this.renderPolyline(track.rightBoundary);
 
     // Outer rumble strips
-    this.ctx.strokeStyle = '#ef4444';
+    this.ctx.strokeStyle = isNight ? '#06b6d4' : '#ef4444';
     this.ctx.lineWidth = 0.25;
     this.renderPolyline(track.leftBoundary);
     this.renderPolyline(track.rightBoundary);

@@ -5,6 +5,7 @@ import { RadarSensor } from '../sensors/RadarSensor';
 import { Track } from '../world/Track';
 import { ControlInput } from '../physics/VehicleState';
 import { Collision } from '../math/Collision';
+import { RoadObstacle } from '../world/Obstacle';
 
 export interface Transition {
   state: Float32Array;
@@ -231,17 +232,17 @@ export class DeepQLearningAgent {
   /**
    * Main step of the Online Learning Loop with anti-cheat checks and barrier physics.
    */
-  public step(dt: number, track: Track, traffic: VehicleModel[]): void {
+  public step(dt: number, track: Track, traffic: VehicleModel[], obstacles: RoadObstacle[] = []): void {
     const v = this.vehicle;
 
     // 1. 360° Perception
-    this.lidar.update(v, track, traffic);
+    this.lidar.update(v, track, traffic, obstacles);
     this.radar.update(v, track, traffic);
     const currentState = this.getFeatureVector(track);
 
     // 2. Evaluate reward and mistake feedback
     if (this.prevState !== null) {
-      const { reward, isMistake, reason, done } = this.calculateReward(track, traffic);
+      const { reward, isMistake, reason, done } = this.calculateReward(track, traffic, obstacles);
 
       const transition: Transition = {
         state: this.prevState,
@@ -305,7 +306,8 @@ export class DeepQLearningAgent {
 
   private calculateReward(
     track: Track,
-    traffic: VehicleModel[]
+    traffic: VehicleModel[],
+    obstacles: RoadObstacle[] = []
   ): { reward: number; isMistake: boolean; reason: string; done: boolean } {
     const v = this.vehicle.state;
     const frenet = track.frenet.cartesianToFrenet(v.position, v.heading, v.speed);
@@ -323,6 +325,19 @@ export class DeepQLearningAgent {
         reason: 'Wrong-Way / Reverse Driving Disqualified',
         done: true,
       };
+    }
+
+    // 0. Collision with Sandbox Obstacles (Cones & Roadblocks)
+    for (const obs of obstacles) {
+      if (v.position.distance(obs.position) < obs.radius + 1.8) {
+        v.isDamaged = true;
+        return {
+          reward: -100.0,
+          isMistake: true,
+          reason: `Collided with Road Hazard (${obs.type})`,
+          done: true,
+        };
+      }
     }
 
     // 1. Critical Mistake: Collided with Track Barrier / Guardrail

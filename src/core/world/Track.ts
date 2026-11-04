@@ -24,6 +24,10 @@ export class Track {
   public laneDividers: Vector2D[][] = [];
   public samplePoints: Vector2D[] = [];
 
+  public get centerLine(): Vector2D[] {
+    return this.samplePoints.length > 0 ? this.samplePoints : this.spline.getWaypoints();
+  }
+
   constructor(
     id: string,
     name: string,

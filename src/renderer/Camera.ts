@@ -8,6 +8,7 @@ export class Camera {
   public lerpFactor: number = 0.08;
   public width: number = 800;
   public height: number = 600;
+  public isLockedToVehicle: boolean = true;
 
   constructor(width: number, height: number) {
     this.width = width;
@@ -20,9 +21,28 @@ export class Camera {
   }
 
   public follow(targetPos: Vector2D, dt: number): void {
+    if (!this.isLockedToVehicle) {
+      // Free floating / user panned
+      this.position = this.position.lerp(this.target, Math.min(1.0, 0.2 * (dt * 60)));
+      this.zoom += (this.targetZoom - this.zoom) * Math.min(1.0, 0.1 * (dt * 60));
+      return;
+    }
     this.target = targetPos.clone();
     this.position = this.position.lerp(this.target, Math.min(1.0, this.lerpFactor * (dt * 60)));
     this.zoom += (this.targetZoom - this.zoom) * Math.min(1.0, 0.1 * (dt * 60));
+  }
+
+  public panBy(deltaScreenX: number, deltaScreenY: number): void {
+    this.isLockedToVehicle = false;
+    const worldDeltaX = deltaScreenX / this.zoom;
+    const worldDeltaY = deltaScreenY / this.zoom;
+    this.target = new Vector2D(this.target.x - worldDeltaX, this.target.y - worldDeltaY);
+    this.position = this.target.clone();
+  }
+
+  public lockTo(targetPos: Vector2D): void {
+    this.isLockedToVehicle = true;
+    this.target = targetPos.clone();
   }
 
   public worldToScreen(worldPos: Vector2D): Vector2D {

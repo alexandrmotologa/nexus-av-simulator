@@ -1,6 +1,23 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { TRACK_PRESETS } from '../core/world/TrackPresets';
-import { Play, Pause, FastForward, RotateCcw, Eye, EyeOff, Layers, Zap } from 'lucide-react';
+import { WeatherMode } from '../core/engine/Simulation';
+import {
+  Play,
+  Pause,
+  RotateCcw,
+  Eye,
+  EyeOff,
+  Layers,
+  Zap,
+  Sun,
+  CloudRain,
+  Moon,
+  Construction,
+  Trash2,
+  Download,
+  Upload,
+  Crosshair,
+} from 'lucide-react';
 
 interface ControlPanelProps {
   timeScale: number;
@@ -16,6 +33,16 @@ interface ControlPanelProps {
   onReset: () => void;
   onFastTrain: (gens: number) => void;
   isTraining: boolean;
+  weather: WeatherMode;
+  onSetWeather: (mode: WeatherMode) => void;
+  sandboxActive: boolean;
+  onToggleSandbox: () => void;
+  obstacleCount: number;
+  onClearObstacles: () => void;
+  onExportBrain: () => void;
+  onImportBrain: (file: File) => void;
+  isCameraLocked: boolean;
+  onSnapCamera: () => void;
 }
 
 export const ControlPanel: React.FC<ControlPanelProps> = ({
@@ -32,10 +59,30 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   onReset,
   onFastTrain,
   isTraining,
+  weather,
+  onSetWeather,
+  sandboxActive,
+  onToggleSandbox,
+  obstacleCount,
+  onClearObstacles,
+  onExportBrain,
+  onImportBrain,
+  isCameraLocked,
+  onSnapCamera,
 }) => {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      onImportBrain(file);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/90 border border-slate-800 rounded-xl px-4 py-2.5 shadow-2xl backdrop-blur-md">
-      {/* Time Control Bar */}
+    <div className="flex flex-wrap items-center justify-between gap-2.5 bg-slate-900/95 border border-slate-800 rounded-xl px-3.5 py-2 shadow-2xl backdrop-blur-md">
+      {/* 1. Time Control Bar */}
       <div className="flex items-center gap-1 bg-slate-950/80 p-1 rounded-lg border border-slate-800">
         <button
           onClick={() => onSetTimeScale(timeScale === 0 ? 1 : 0)}
@@ -69,13 +116,12 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
           className="flex items-center gap-1 ml-1 px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 rounded text-xs font-semibold transition-all disabled:opacity-50"
         >
           <Zap className="w-3 h-3 text-emerald-400" />
-          <span>{isTraining ? 'Training...' : '+25 Gens (Fast)'}</span>
+          <span className="hidden sm:inline">{isTraining ? 'Training...' : '+25 Gens'}</span>
         </button>
       </div>
 
-      {/* Track Preset Chooser */}
-      <div className="flex items-center gap-2 text-xs">
-        <span className="text-slate-400 font-mono hidden sm:inline">Track:</span>
+      {/* 2. Track Preset Selector */}
+      <div className="flex items-center gap-1.5 text-xs">
         <select
           value={selectedTrackId}
           onChange={(e) => onSelectTrack(e.target.value)}
@@ -83,57 +129,167 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
         >
           {TRACK_PRESETS.map((t) => (
             <option key={t.id} value={t.id}>
-              {t.name} ({t.laneCount} lanes)
+              {t.name}
             </option>
           ))}
         </select>
       </div>
 
-      {/* Traffic Density Control */}
+      {/* 3. Weather Atmosphere Modes */}
+      <div className="flex items-center gap-1 bg-slate-950/80 p-1 rounded-lg border border-slate-800">
+        <button
+          onClick={() => onSetWeather('DRY')}
+          className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all ${
+            weather === 'DRY'
+              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+          title="Sunny & Dry: 100% Tire Grip"
+        >
+          <Sun className="w-3 h-3 text-amber-400" />
+          <span className="hidden md:inline">Dry</span>
+        </button>
+
+        <button
+          onClick={() => onSetWeather('WET')}
+          className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all ${
+            weather === 'WET'
+              ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+          title="Rain & Wet: Reduced Grip & High Lateral Drift"
+        >
+          <CloudRain className="w-3 h-3 text-blue-400" />
+          <span className="hidden md:inline">Wet</span>
+        </button>
+
+        <button
+          onClick={() => onSetWeather('NIGHT')}
+          className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all ${
+            weather === 'NIGHT'
+              ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+          title="Cyberpunk Night: Dynamic Headlights & Neon Track Glow"
+        >
+          <Moon className="w-3 h-3 text-purple-400" />
+          <span className="hidden md:inline">Night</span>
+        </button>
+      </div>
+
+      {/* 4. Sandbox Road Hazard Tools */}
+      <div className="flex items-center gap-1 bg-slate-950/80 p-1 rounded-lg border border-slate-800">
+        <button
+          onClick={onToggleSandbox}
+          className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all ${
+            sandboxActive
+              ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40 ring-1 ring-orange-500/30'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+          title="Click anywhere on the road to place a traffic cone"
+        >
+          <Construction className="w-3 h-3 text-orange-400" />
+          <span>{sandboxActive ? 'Drop: ON' : 'Cones'}</span>
+          {obstacleCount > 0 && (
+            <span className="ml-0.5 px-1 bg-orange-950 text-orange-400 rounded-full text-[10px] font-bold">
+              {obstacleCount}
+            </span>
+          )}
+        </button>
+
+        {obstacleCount > 0 && (
+          <button
+            onClick={onClearObstacles}
+            className="p-1 text-slate-400 hover:text-rose-400 transition-colors"
+            title="Clear All Cones"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        )}
+      </div>
+
+      {/* 5. Traffic Density Control */}
       <div className="flex items-center gap-2 text-xs text-slate-300">
-        <span className="text-slate-400 font-mono hidden md:inline">NPCs:</span>
+        <span className="text-slate-400 font-mono hidden xl:inline">NPCs:</span>
         <input
           type="range"
           min={0}
           max={65}
           value={trafficDensity}
           onChange={(e) => onSetTrafficDensity(parseInt(e.target.value))}
-          className="w-24 accent-sky-500 cursor-pointer"
+          className="w-20 accent-sky-500 cursor-pointer"
         />
-        <span className="font-mono text-sky-400 min-w-[22px] font-semibold">{trafficDensity}</span>
+        <span className="font-mono text-sky-400 min-w-[20px] font-semibold">{trafficDensity}</span>
       </div>
 
-      {/* Sensor / Display Toggles */}
-      <div className="flex items-center gap-1.5">
+      {/* 6. AI Brain Hub: Export & Import */}
+      <div className="flex items-center gap-1 bg-slate-950/80 p-1 rounded-lg border border-slate-800">
+        <button
+          onClick={onExportBrain}
+          className="flex items-center gap-1 px-2 py-1 text-slate-400 hover:text-sky-300 transition-colors text-xs font-medium"
+          title="Download Current Champion Neural Brain (JSON)"
+        >
+          <Download className="w-3 h-3 text-sky-400" />
+          <span className="hidden lg:inline">Export</span>
+        </button>
+
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          className="flex items-center gap-1 px-2 py-1 text-slate-400 hover:text-emerald-300 transition-colors text-xs font-medium"
+          title="Upload Saved Neural Brain Model (JSON)"
+        >
+          <Upload className="w-3 h-3 text-emerald-400" />
+          <span className="hidden lg:inline">Import</span>
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json"
+          onChange={handleFileChange}
+          className="hidden"
+        />
+      </div>
+
+      {/* 7. Sensor & Camera Toggles */}
+      <div className="flex items-center gap-1">
+        {!isCameraLocked && (
+          <button
+            onClick={onSnapCamera}
+            className="flex items-center gap-1 px-2 py-1.5 bg-sky-500/20 text-sky-300 border border-sky-500/40 rounded-lg text-xs font-semibold animate-pulse"
+            title="Recenter Camera on Lead Vehicle"
+          >
+            <Crosshair className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">Recenter</span>
+          </button>
+        )}
+
         <button
           onClick={onToggleLidar}
           title="Toggle LiDAR Beams"
-          className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+          className={`p-1.5 rounded-lg border text-xs font-medium transition-all ${
             showLidar
               ? 'bg-sky-500/20 border-sky-500/40 text-sky-300'
               : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'
           }`}
         >
           {showLidar ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-          <span>LiDAR</span>
         </button>
 
         <button
           onClick={onToggleDividers}
           title="Toggle Lane Dividers"
-          className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+          className={`p-1.5 rounded-lg border text-xs font-medium transition-all ${
             showDividers
               ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300'
               : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'
           }`}
         >
           <Layers className="w-3.5 h-3.5" />
-          <span>Lanes</span>
         </button>
 
         <button
           onClick={onReset}
-          title="Reset Current Simulation"
+          title="Reset Simulation"
           className="p-1.5 rounded-lg border border-slate-800 bg-slate-950 text-slate-400 hover:text-rose-400 hover:border-rose-900 transition-all"
         >
           <RotateCcw className="w-3.5 h-3.5" />

@@ -3,6 +3,7 @@ import { VehicleModel } from '../physics/VehicleModel';
 import { Track } from '../world/Track';
 import { IntelligentDriverModel, IDMParameters } from './IDM';
 import { MOBILLaneChanger } from './MOBIL';
+import { RoadObstacle } from '../world/Obstacle';
 
 export interface TrafficVehicleAgent {
   vehicle: VehicleModel;
@@ -105,7 +106,7 @@ export class TrafficManager {
   /**
    * Updates all NPC traffic over timestep dt using IDM, verified lane-changing, and physical collision resolution.
    */
-  public update(dt: number, egoVehicle?: VehicleModel): void {
+  public update(dt: number, egoVehicle?: VehicleModel, obstacles: RoadObstacle[] = []): void {
     const allVehicles = [...this.agents.map((a) => a.vehicle)];
     if (egoVehicle) allVehicles.push(egoVehicle);
 
@@ -117,6 +118,14 @@ export class TrafficManager {
           this.respawnAgent(agent, egoVehicle);
         }
         continue;
+      }
+
+      // Check collision with road hazards
+      for (const obs of obstacles) {
+        if (agent.vehicle.state.position.distance(obs.position) < obs.radius + 1.8) {
+          agent.vehicle.state.isDamaged = true;
+          break;
+        }
       }
 
       const vState = agent.vehicle.state;
