@@ -136,6 +136,20 @@ export class SafetyGovernor {
       }
     }
 
+    // 3b. Intelligent Speed Assistance (ISA) - Certified Legal Speed Limit Compliance
+    const activeSpeedLimitKmh = track.getSpeedLimitAtDistance(frenet.s);
+    const legalMaxSpeedMps = activeSpeedLimitKmh / 3.6;
+
+    if (v.speed > legalMaxSpeedMps) {
+      const overspeed = v.speed - legalMaxSpeedMps;
+      // Cut throttle progressively when exceeding the posted speed limit
+      finalThrottle = Math.max(0, finalThrottle - overspeed * 0.35);
+      // Active braking when vehicle exceeds legal speed limit by > 3 km/h (0.85 m/s)
+      if (overspeed > 0.85) {
+        finalBrake = Math.max(finalBrake, Math.min(0.65, overspeed * 0.25));
+      }
+    }
+
     // 4. Blend AI Intent with Certified Safety Guidance & Wall Repulsion
     let finalSteer = rawControl.steer;
 

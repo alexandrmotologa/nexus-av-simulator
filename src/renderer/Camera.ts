@@ -48,8 +48,8 @@ export class Camera {
       return;
     }
     this.target = targetPos.clone();
-    // High-responsiveness exponential damping: zero micro-jitter, silky 60/120/144fps lock
-    const followRate = 22.0;
+    // Smooth cinematic damping: zero micro-jitter, silky transitions without jarring snaps
+    const followRate = 8.5;
     const alpha = 1.0 - Math.exp(-followRate * dt);
     this.position = this.position.lerp(this.target, Math.min(1.0, alpha));
     const zoomAlpha = 1.0 - Math.exp(-8.0 * dt);

@@ -135,7 +135,9 @@ export class CanvasRenderer {
 
       this.ctx.save();
       if (isMultiFleet && !isLead) {
-        this.ctx.globalAlpha = 0.32; // Clean semi-transparent ghost fleet runner
+        // Give top contenders higher presence, keep background fleet soft and non-distracting
+        const isPodium = vehicle.config.color === '#06b6d4' || vehicle.config.color === '#f59e0b';
+        this.ctx.globalAlpha = isPodium ? 0.65 : 0.20;
       }
 
       this.renderVehicle(vehicle, isLead, options.weather);

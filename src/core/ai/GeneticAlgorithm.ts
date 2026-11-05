@@ -69,7 +69,7 @@ export class GeneticEngine {
   public saveChampionToStorage(): void {
     if (!this.bestBrainEver) return;
     try {
-      localStorage.setItem('nexus_av_ga_champion', JSON.stringify(this.bestBrainEver.toJSON()));
+      localStorage.setItem('nexus_av_ga_champion_v3', JSON.stringify(this.bestBrainEver.toJSON()));
     } catch (e) {
       console.warn('Failed to save GA champion to localStorage', e);
     }
@@ -77,10 +77,10 @@ export class GeneticEngine {
 
   public loadChampionFromStorage(): boolean {
     try {
-      const raw = localStorage.getItem('nexus_av_ga_champion');
+      const raw = localStorage.getItem('nexus_av_ga_champion_v3');
       if (!raw) return false;
       const json = JSON.parse(raw);
-      if (json && json.layers && (json.fitness ?? 0) > 20.0) {
+      if (json && json.layers && json.layers[0]?.inputs === 26 && (json.fitness ?? 0) > 20.0) {
         this.bestBrainEver = NeuralNetwork.fromJSON(json);
         if (this.population.length > 0) {
           this.population[0].brain = this.bestBrainEver.clone();
@@ -100,13 +100,13 @@ export class GeneticEngine {
 
   private createDefaultBrain(): NeuralNetwork {
     const net = new NeuralNetwork();
-    // Inputs: 20 LiDAR rays (360° omnidirectional) + speed + steer + lane offset + rear radar threat = 24 inputs
-    // Hidden 1: 18 neurons (ReLU)
-    // Hidden 2: 12 neurons (Tanh)
+    // Inputs: 20 LiDAR rays (360° omnidirectional) + speed + steer + lane offset + rear threat + speed limit ratio + curvature ahead = 26 inputs
+    // Hidden 1: 20 neurons (ReLU)
+    // Hidden 2: 14 neurons (Tanh)
     // Outputs: 3 outputs [throttle, brake, steer]
-    net.addLayer(24, 18, 'relu');
-    net.addLayer(18, 12, 'tanh');
-    net.addLayer(12, 3, 'tanh');
+    net.addLayer(26, 20, 'relu');
+    net.addLayer(20, 14, 'tanh');
+    net.addLayer(14, 3, 'tanh');
     return net;
   }
 
@@ -136,8 +136,15 @@ export class GeneticEngine {
         {
           id: `ai-agent-${i}`,
           name: `NeuroBot-${i}`,
-          color: i === 0 ? '#10b981' : i < this.elitismCount ? '#f59e0b' : '#ef4444',
-          maxSpeed: 40.0,
+          color:
+            i === 0
+              ? '#10b981' // P1 Leader (Emerald Green)
+              : i === 1
+              ? '#06b6d4' // P2 Contender (Cyan)
+              : i === 2
+              ? '#f59e0b' // P3 Contender (Amber Gold)
+              : '#475569', // Fleet Candidates (Subtle Slate Blue, not alarming red)
+          maxSpeed: 38.0,
         },
         grid.pos,
         grid.heading
@@ -252,13 +259,27 @@ export class GeneticEngine {
         continue;
       }
 
-      // 2. Prepare normalized inputs
+      // 2. Prepare normalized inputs (26 dimensions)
       const normalizedSpeed = Math.max(0, Math.min(1.0, v.state.speed / v.config.maxSpeed));
       const normalizedSteer = v.state.steerAngle / v.config.maxSteerAngle;
       const normalizedOffset = Math.max(-1, Math.min(1, frenet.d / (this.track.totalWidth * 0.5)));
       const rearThreat = agent.radar.rearThreatLevel;
 
-      const inputs = new Float32Array(24);
+      // Legal Speed Limit Awareness
+      const activeSpeedLimitKmh = this.track.getSpeedLimitAtDistance(frenet.s);
+      const legalMaxSpeedMps = Math.max(6.0, activeSpeedLimitKmh / 3.6);
+      const speedLimitRatio = Math.max(0, Math.min(2.0, v.state.speed / legalMaxSpeedMps));
+
+      // 30m predictive lookahead curvature
+      const lookaheadDist = Math.max(16.0, v.state.speed * 1.2);
+      let aheadS = frenet.s + lookaheadDist;
+      if (this.track.closed && this.track.spline.totalLength > 0) {
+        if (aheadS >= this.track.spline.totalLength) aheadS -= this.track.spline.totalLength;
+      }
+      const aheadState = this.track.spline.evaluateAtDistance(aheadS);
+      const curvatureAhead = Math.max(-1.0, Math.min(1.0, aheadState.curvature * 50.0));
+
+      const inputs = new Float32Array(26);
       for (let i = 0; i < 20; i++) {
         inputs[i] = lidarReadings[i] ?? 1.0;
       }
@@ -266,6 +287,8 @@ export class GeneticEngine {
       inputs[21] = normalizedSteer;
       inputs[22] = normalizedOffset;
       inputs[23] = rearThreat;
+      inputs[24] = speedLimitRatio;
+      inputs[25] = curvatureAhead;
 
       // 3. Brain Inference: Decoupled Throttle & Braking
       const outputs = agent.brain.feedForward(inputs);
@@ -404,23 +427,43 @@ export class GeneticEngine {
 
       if (forwardDeltaS > 0) {
         agent.stats.distance += forwardDeltaS;
-        // Reward forward progression
-        agent.fitness += forwardDeltaS * 1.8;
+
+        // Legal Speed Discipline: Reward progression only within speed limits
+        if (v.state.speed <= legalMaxSpeedMps + 0.6) {
+          // Law-abiding progression
+          agent.fitness += forwardDeltaS * 2.0;
+
+          // Bonus for steady legal cruise (80% - 100% of speed limit)
+          if (v.state.speed >= legalMaxSpeedMps * 0.78) {
+            agent.fitness += 1.8 * dt;
+          }
+        } else {
+          // Speed violation penalty: cancel forward progress reward and penalize harshly
+          const overspeedMps = v.state.speed - legalMaxSpeedMps;
+          agent.fitness -= overspeedMps * 5.5 * dt;
+        }
       } else {
         // Penalize reversing / regression
-        agent.fitness -= 5.0 * dt;
+        agent.fitness -= 8.0 * dt;
       }
 
       // Bonus for lane centering
-      const targetLaneD = this.track.getLaneCenterD(this.track.getLaneIndex(frenet.d));
+      const currentLane = this.track.getLaneIndex(frenet.d);
+      const targetLaneD = this.track.getLaneCenterD(currentLane);
       const distFromLaneCenter = Math.abs(frenet.d - targetLaneD);
-      if (distFromLaneCenter < 0.6) {
-        agent.fitness += 0.8 * dt;
+      if (distFromLaneCenter < 0.5) {
+        agent.fitness += 1.2 * dt;
       }
 
-      // Penalty for high lateral acceleration / jerky skidding
+      // Penalty for illegal crossing of solid lines (SOLID_WHITE)
+      const dividerType = this.track.getDividerTypeAt(Math.max(0, currentLane - 1), frenet.s);
+      if (dividerType === 'SOLID_WHITE' && distFromLaneCenter > 1.1) {
+        agent.fitness -= 3.5 * dt;
+      }
+
+      // Penalty for violent lateral skidding / loss of traction
       if (v.state.isSkidding) {
-        agent.fitness -= 1.5 * dt;
+        agent.fitness -= 3.0 * dt;
       }
 
       // Bonus for clean overtake
@@ -438,19 +481,19 @@ export class GeneticEngine {
       agent.stats.score = agent.fitness;
     }
 
-    // Identify current best performer with hysteresis to prevent camera target oscillations
+    // Identify current best performer with strong hysteresis to prevent camera target oscillations
     let topAgent = this.bestAgent && this.bestAgent.isAlive ? this.bestAgent : null;
     let topFitness = topAgent ? topAgent.fitness : -Infinity;
 
     for (const agent of this.population) {
       if (!agent.isAlive) continue;
-      // Require challenger to exceed current leader by a small margin (+3.0) to prevent jittery focus switching
-      if (!topAgent || agent.fitness > topFitness + 3.0) {
+      // Require challenger to exceed current leader by a substantial margin (+35.0) to prevent jittery focus switching
+      if (!topAgent || agent.fitness > topFitness + 35.0) {
         topFitness = agent.fitness;
         topAgent = agent;
       }
     }
-    this.bestAgent = topAgent || this.population[0];
+    this.bestAgent = topAgent || this.population.find((a) => a.isAlive) || this.population[0];
 
     this.generationFrames++;
 
@@ -533,7 +576,14 @@ export class GeneticEngine {
       agent.brain = nextBrains[i] || this.createDefaultBrain();
       agent.vehicle.reset(grid.pos, grid.heading);
       agent.vehicle.state.speed = 10.0; // rolling start
-      agent.vehicle.config.color = i === 0 ? '#10b981' : i < this.elitismCount ? '#f59e0b' : '#ef4444';
+      agent.vehicle.config.color =
+        i === 0
+          ? '#10b981' // P1 Leader (Emerald Green)
+          : i === 1
+          ? '#06b6d4' // P2 Contender (Cyan)
+          : i === 2
+          ? '#f59e0b' // P3 Contender (Amber Gold)
+          : '#475569'; // Fleet Candidates (Subtle Slate Blue)
       agent.isAlive = true;
       agent.fitness = 0;
       agent.lastS = grid.s;

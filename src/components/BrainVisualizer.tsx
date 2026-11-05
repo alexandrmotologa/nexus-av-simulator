@@ -33,7 +33,7 @@ export const BrainVisualizer: React.FC<BrainVisualizerProps> = ({ brain, classNa
 
     // 1. Input Layer
     const inputLayer = brain.layers[0];
-    const inCount = Math.min(24, inputLayer.inputsCount);
+    const inCount = Math.min(28, inputLayer.inputsCount);
     const inNodes: { x: number; y: number; val: number }[] = [];
     const inYSpacing = height / (inCount + 1);
 
@@ -133,7 +133,11 @@ export const BrainVisualizer: React.FC<BrainVisualizerProps> = ({ brain, classNa
           <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
           NEURAL SYNAPSE MONITOR
         </span>
-        <span className="text-[10px] text-slate-500">24 In → 18 → 12 → 3 Out</span>
+        <span className="text-[10px] text-slate-500 font-mono">
+          {brain && brain.layers.length > 0
+            ? `${brain.layers[0].inputsCount} In → ${brain.layers.map((l) => l.outputsCount).join(' → ')} Out`
+            : '26 In → 20 → 14 → 3 Out'}
+        </span>
       </div>
       <canvas
         ref={canvasRef}
