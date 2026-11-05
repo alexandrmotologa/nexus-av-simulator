@@ -11,6 +11,7 @@ import { TrackedEntity } from '../core/sensors/SensorFusion';
 import { FrenetTrajectory } from '../core/planning/FrenetTrajectoryPlanner';
 import { Crosswalk } from '../core/world/Crosswalk';
 import { PedestrianModel } from '../core/traffic/PedestrianModel';
+import { HeatmapPoint } from '../core/telemetry/TelemetryHeatmap';
 
 export interface RenderOptions {
   showLidar: boolean;
@@ -27,6 +28,10 @@ export interface RenderOptions {
   trajectoryCandidates?: FrenetTrajectory[];
   crosswalks?: Crosswalk[];
   vrus?: PedestrianModel[];
+  ghostVehicle?: VehicleModel | null;
+  heatmapPoints?: HeatmapPoint[];
+  ncapVehicle?: VehicleModel | null;
+  ncapPedestrian?: PedestrianModel | null;
 }
 
 export class CanvasRenderer {
@@ -105,6 +110,24 @@ export class CanvasRenderer {
 
     // 1. Render Track (Asphalt surface, curbs, dividers)
     this.renderTrack(track, options);
+
+    // 1b. Render Telemetry Heatmap Ribbon (Braking & Acceleration Ribbon on Asphalt)
+    if (options.heatmapPoints && options.heatmapPoints.length > 1) {
+      this.renderTelemetryHeatmap(options.heatmapPoints);
+    }
+
+    // 1c. Render Replay Benchmark Ghost Car
+    if (options.ghostVehicle) {
+      this.renderGhostVehicle(options.ghostVehicle);
+    }
+
+    // 1d. Render Euro NCAP Injected Safety Test Entities
+    if (options.ncapVehicle) {
+      this.renderVehicle(options.ncapVehicle, false, options.weather);
+    }
+    if (options.ncapPedestrian) {
+      this.renderVRUs([options.ncapPedestrian]);
+    }
 
     // 2. Render Skidmarks & Procedural Tire Smoke Particles
     this.renderSkidmarks();
@@ -1006,6 +1029,59 @@ export class CanvasRenderer {
         this.ctx.fill();
       }
     }
+    this.ctx.restore();
+  }
+
+  public renderTelemetryHeatmap(points?: HeatmapPoint[]): void {
+    if (!points || points.length < 2) return;
+
+    this.ctx.save();
+    this.ctx.lineWidth = 0.85;
+    this.ctx.lineCap = 'round';
+    this.ctx.globalAlpha = 0.75;
+
+    for (let i = 0; i < points.length - 1; i++) {
+      const p1 = points[i];
+      const p2 = points[i + 1];
+      this.ctx.strokeStyle = p1.color;
+      this.ctx.beginPath();
+      this.ctx.moveTo(p1.position.x, p1.position.y);
+      this.ctx.lineTo(p2.position.x, p2.position.y);
+      this.ctx.stroke();
+    }
+    this.ctx.restore();
+  }
+
+  public renderGhostVehicle(ghost: VehicleModel): void {
+    const v = ghost.state;
+    this.ctx.save();
+    this.ctx.translate(v.position.x, v.position.y);
+    this.ctx.rotate(v.heading);
+
+    const length = ghost.config.length;
+    const width = ghost.config.width;
+    const halfL = length * 0.5;
+    const halfW = width * 0.5;
+
+    // Translucent holographic chassis
+    this.ctx.beginPath();
+    this.ctx.roundRect(-halfL, -halfW, length, width, [0.8, 1.2, 0.4, 0.4]);
+    this.ctx.fillStyle = 'rgba(56, 189, 248, 0.28)';
+    this.ctx.fill();
+
+    // Glowing cyan perimeter wireframe
+    this.ctx.lineWidth = 0.32;
+    this.ctx.strokeStyle = '#38bdf8';
+    this.ctx.setLineDash([0.6, 0.3]);
+    this.ctx.stroke();
+    this.ctx.setLineDash([]);
+
+    // Ghost title badge
+    this.ctx.fillStyle = '#bae6fd';
+    this.ctx.font = 'bold 0.85px sans-serif';
+    this.ctx.textAlign = 'center';
+    this.ctx.fillText('BENCHMARK GHOST', 0, 0.3);
+
     this.ctx.restore();
   }
 

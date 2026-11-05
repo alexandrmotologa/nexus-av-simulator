@@ -44,7 +44,7 @@ export class SafetyGovernor {
     obstacles: RoadObstacle[],
     rawControl: ControlInput,
     dt: number,
-    assignedLaneIndex: number = 1
+    assignedLaneIndex: number = -1
   ): ControlInput {
     const v = vehicle.state;
     const frenet = track.frenet.cartesianToFrenet(v.position, v.heading, v.speed);
@@ -153,13 +153,27 @@ export class SafetyGovernor {
     // 4. Blend AI Intent with Certified Safety Guidance & Wall Repulsion
     let finalSteer = rawControl.steer;
 
+    // Check if vehicle is straddling any divider line without active lane change signaling
+    let isStraddlingDivider = false;
+    const halfCarW = vehicle.config.width * 0.5;
+    for (let l = 1; l < track.laneCount; l++) {
+      const dividerD = (track.totalWidth * 0.5) - l * track.laneWidth;
+      if (Math.abs(frenet.d - dividerD) < halfCarW + 0.15) {
+        isStraddlingDivider = true;
+        break;
+      }
+    }
+
     if (Math.abs(wallRepulseSteer) > 0.1) {
       // Priority 1: Imminent wall collision avoidance
       finalSteer = wallRepulseSteer * 0.75 + laneGuidanceSteer * 0.25;
       finalThrottle *= 0.5; // Ease throttle when making urgent evasive correction
+    } else if (isStraddlingDivider && !v.isBlinkingLeft && !v.isBlinkingRight) {
+      // Priority 2: Lane Straddling Correction - firmly pull vehicle into center of target lane
+      finalSteer = laneGuidanceSteer * 0.85 + rawControl.steer * 0.15;
     } else {
-      // Priority 2: Lane discipline with AI nuance (50% lane guidance + 50% AI racing line / overtake)
-      finalSteer = laneGuidanceSteer * 0.55 + rawControl.steer * 0.45;
+      // Priority 3: Normal lane discipline with AI nuance (65% lane guidance + 35% AI nuance)
+      finalSteer = laneGuidanceSteer * 0.65 + rawControl.steer * 0.35;
     }
 
     // Double Solid Yellow Centerline Protection (prevent crossing into oncoming traffic flow)

@@ -179,9 +179,11 @@ export class DeepQLearningAgent {
     // 21: Steer Angle
     state[21] = v.steerAngle / this.vehicle.config.maxSteerAngle;
 
-    // 22: Lateral Lane Deviation (-1 to +1)
-    const halfWidth = track.totalWidth * 0.5;
-    state[22] = Math.max(-1.0, Math.min(1.0, frenet.d / halfWidth));
+    // 22: Normalized Lateral Deviation From Lane Center (-1.0 to +1.0)
+    const currentLane = track.getLaneIndex(frenet.d);
+    const laneCenterD = track.getLaneCenterD(currentLane);
+    const laneHalfWidth = track.laneWidth * 0.5;
+    state[22] = Math.max(-1.0, Math.min(1.0, (frenet.d - laneCenterD) / laneHalfWidth));
 
     // 23: Rear Threat Sensor (detects fast closing vehicles behind)
     state[23] = this.radar.rearThreatLevel;
@@ -459,6 +461,25 @@ export class DeepQLearningAgent {
         reward: -3.0,
         isMistake: true,
         reason: 'Unlawful Lane Departure Over Solid White Line',
+        done: false,
+      };
+    }
+
+    // 7. Significant Mistake: Lane Straddling (driving on top of divider lines)
+    let isStraddlingDivider = false;
+    const halfCarW = this.vehicle.config.width * 0.5;
+    for (let l = 1; l < track.laneCount; l++) {
+      const dividerD = (track.totalWidth * 0.5) - l * track.laneWidth;
+      if (Math.abs(frenet.d - dividerD) < halfCarW + 0.15) {
+        isStraddlingDivider = true;
+        break;
+      }
+    }
+    if (isStraddlingDivider && !v.isBlinkingLeft && !v.isBlinkingRight) {
+      return {
+        reward: -4.5,
+        isMistake: true,
+        reason: 'Lane Straddling Violation (Vehicle Driving On Divider Line)',
         done: false,
       };
     }

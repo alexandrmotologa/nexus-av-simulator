@@ -255,6 +255,45 @@ export const Cockpit: React.FC<CockpitProps> = ({ telemetry, onSetPilotMode }) =
             </div>
           </div>
         )}
+
+        {/* ISO 2631 Passenger Comfort Index */}
+        {telemetry.comfortScore !== undefined && (
+          <div className="hidden md:flex items-center gap-1.5 sm:gap-2 pl-2 border-l border-slate-800" title="ISO 2631 Passenger Ride Comfort (Jerk RMS Rate)">
+            <div
+              className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full border flex items-center justify-center text-[10px] sm:text-xs font-bold ${
+                telemetry.comfortScore >= 85
+                  ? 'bg-emerald-950/70 border-emerald-500 text-emerald-300'
+                  : telemetry.comfortScore >= 65
+                  ? 'bg-amber-950/60 border-amber-500 text-amber-300'
+                  : 'bg-rose-950/70 border-rose-500 text-rose-300 animate-pulse'
+              }`}
+            >
+              {telemetry.comfortScore}%
+            </div>
+            <div className="hidden lg:block">
+              <div className="text-[9px] uppercase tracking-wider text-slate-400">Ride Comfort</div>
+              <div className="text-[10px] font-bold text-slate-300">{telemetry.comfortRating || 'SMOOTH'}</div>
+            </div>
+          </div>
+        )}
+
+        {/* EV Energy Efficiency (kWh/100km & Regen kW) */}
+        {telemetry.energyKwhPer100Km !== undefined && (
+          <div className="hidden xl:flex items-center gap-1.5 pl-2 border-l border-slate-800" title="Virtual EV Electric Economy & Regenerative Braking">
+            <div className="text-right">
+              <div className="text-[9px] uppercase tracking-wider text-slate-400">EV Economy</div>
+              <div className="text-[11px] font-bold text-emerald-400">
+                {telemetry.energyKwhPer100Km}{' '}
+                <span className="text-[9px] font-normal text-slate-500">kWh/100km</span>
+              </div>
+            </div>
+            {telemetry.regenPowerKw && telemetry.regenPowerKw > 0 ? (
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 animate-pulse">
+                +{telemetry.regenPowerKw}kW REGEN
+              </span>
+            ) : null}
+          </div>
+        )}
       </div>
 
       {/* Manual Driver Instructions Banner & Level 2+ Co-Pilot Active Interventions */}

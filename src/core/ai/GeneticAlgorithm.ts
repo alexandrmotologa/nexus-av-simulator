@@ -69,7 +69,7 @@ export class GeneticEngine {
   public saveChampionToStorage(): void {
     if (!this.bestBrainEver) return;
     try {
-      localStorage.setItem('nexus_av_ga_champion_v3', JSON.stringify(this.bestBrainEver.toJSON()));
+      localStorage.setItem('nexus_av_ga_champion_v4', JSON.stringify(this.bestBrainEver.toJSON()));
     } catch (e) {
       console.warn('Failed to save GA champion to localStorage', e);
     }
@@ -77,7 +77,7 @@ export class GeneticEngine {
 
   public loadChampionFromStorage(): boolean {
     try {
-      const raw = localStorage.getItem('nexus_av_ga_champion_v3');
+      const raw = localStorage.getItem('nexus_av_ga_champion_v4');
       if (!raw) return false;
       const json = JSON.parse(raw);
       if (json && json.layers && json.layers[0]?.inputs === 26 && (json.fitness ?? 0) > 20.0) {
@@ -262,7 +262,10 @@ export class GeneticEngine {
       // 2. Prepare normalized inputs (26 dimensions)
       const normalizedSpeed = Math.max(0, Math.min(1.0, v.state.speed / v.config.maxSpeed));
       const normalizedSteer = v.state.steerAngle / v.config.maxSteerAngle;
-      const normalizedOffset = Math.max(-1, Math.min(1, frenet.d / (this.track.totalWidth * 0.5)));
+      // Normalized lateral deviation from target lane center (-1 left lane edge to +1 right lane edge)
+      const currentLaneCenterD = this.track.getLaneCenterD(agent.assignedLane);
+      const laneHalfWidth = this.track.laneWidth * 0.5;
+      const normalizedOffset = Math.max(-1.0, Math.min(1.0, (frenet.d - currentLaneCenterD) / laneHalfWidth));
       const rearThreat = agent.radar.rearThreatLevel;
 
       // Legal Speed Limit Awareness
@@ -449,10 +452,24 @@ export class GeneticEngine {
 
       // Bonus for lane centering
       const currentLane = this.track.getLaneIndex(frenet.d);
-      const targetLaneD = this.track.getLaneCenterD(currentLane);
+      const targetLaneD = this.track.getLaneCenterD(agent.assignedLane >= 0 ? agent.assignedLane : currentLane);
       const distFromLaneCenter = Math.abs(frenet.d - targetLaneD);
-      if (distFromLaneCenter < 0.5) {
-        agent.fitness += 1.2 * dt;
+      if (distFromLaneCenter < 0.45) {
+        agent.fitness += 2.0 * dt;
+      }
+
+      // Strict Penalty for Lane Straddling (driving directly on top of divider markings)
+      let isStraddlingDivider = false;
+      const halfCarWidth = v.config.width * 0.5;
+      for (let l = 1; l < this.track.laneCount; l++) {
+        const dividerD = (this.track.totalWidth * 0.5) - l * this.track.laneWidth;
+        if (Math.abs(frenet.d - dividerD) < halfCarWidth + 0.15) {
+          isStraddlingDivider = true;
+          break;
+        }
+      }
+      if (isStraddlingDivider && !v.state.isBlinkingLeft && !v.state.isBlinkingRight) {
+        agent.fitness -= 5.0 * dt; // Strong continuous penalty for driving on the line
       }
 
       // Penalty for illegal crossing of solid lines (SOLID_WHITE)

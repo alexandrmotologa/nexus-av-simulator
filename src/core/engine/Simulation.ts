@@ -25,6 +25,10 @@ import { FrenetTrajectoryPlanner, FrenetTrajectory } from '../planning/FrenetTra
 import { FaultInjectionEngine } from '../faults/FaultInjectionEngine';
 import { TelemetryBridge } from '../telemetry/TelemetryBridge';
 import { SafetyGovernor } from '../control/SafetyGovernor';
+import { EuroNCAPEngine, EuroNCAPScenarioType, EuroNCAPVerdict } from '../scenarios/EuroNCAPEngine';
+import { GhostLapManager } from '../telemetry/GhostLapManager';
+import { TelemetryHeatmap } from '../telemetry/TelemetryHeatmap';
+import { ComfortEnergyMetrics, ComfortEnergyStatus } from '../physics/ComfortEnergyMetrics';
 
 export type PilotMode = 'NEUROEVOLUTION' | 'DEEP_RL_AGENT' | 'CLASSIC_ROBOTICS' | 'HUMAN_DRIVER' | 'DUEL';
 export type WeatherMode = 'DRY' | 'WET' | 'NIGHT' | 'FOG';
@@ -71,6 +75,15 @@ export interface SimulationTelemetry {
   gamepadConnected?: boolean;
   isRecordingDemo?: boolean;
   demoSamples?: number;
+  comfortScore?: number;
+  comfortRating?: string;
+  jerkTotal?: number;
+  energyKwhPer100Km?: number;
+  regenPowerKw?: number;
+  ncapVerdict?: EuroNCAPVerdict | null;
+  ncapRunning?: boolean;
+  ncapScenario?: EuroNCAPScenarioType;
+  ghostBestLapTime?: number;
 }
 
 export class SimulationEngine {
@@ -99,6 +112,17 @@ export class SimulationEngine {
   public latestCandidateTrajectories: FrenetTrajectory[] = [];
   public latestVisionResult: VisionDetectionResult | null = null;
   public latestV2IPacket: V2ISignalingPacket | null = null;
+  public euroNCAP: EuroNCAPEngine = new EuroNCAPEngine();
+  public ghostLapManager: GhostLapManager = new GhostLapManager();
+  public telemetryHeatmap: TelemetryHeatmap = new TelemetryHeatmap();
+  public comfortMetrics: ComfortEnergyMetrics = new ComfortEnergyMetrics();
+  public latestComfortStatus: ComfortEnergyStatus = {
+    jerkTotal: 0,
+    comfortScore: 98,
+    comfortRating: 'ULTRA LUXURY',
+    energyKwhPer100Km: 17.5,
+    regenPowerKw: 0,
+  };
   private cameraFrameCounter: number = 0;
 
   public pilotMode: PilotMode = 'NEUROEVOLUTION';
@@ -511,6 +535,24 @@ export class SimulationEngine {
         BlackBoxRecorder.getInstance().triggerIncident('Kinematic Boundary or Vehicle Impact');
         GamepadController.getInstance().vibrate(0.85, 1.0, 250);
       }
+
+      // 5. Telemetry Heatmap, Ghost Lap Replay & Euro NCAP Safety Validation
+      this.ghostLapManager.updateReplay(dt);
+      this.euroNCAP.update(dt, activeEgo, this.track);
+      this.telemetryHeatmap.addSample(
+        v.position,
+        v.heading,
+        v.longitudinalAcc,
+        v.speed
+      );
+      this.latestComfortStatus = this.comfortMetrics.update(
+        dt,
+        v.speed,
+        v.longitudinalAcc,
+        v.lateralAcc,
+        v.isBraking,
+        activeEgo.config.mass || 1500
+      );
     }
   }
 
@@ -698,6 +740,15 @@ export class SimulationEngine {
       gamepadConnected: GamepadController.getInstance().isConnected,
       isRecordingDemo: ImitationRecorder.getInstance().isRecording,
       demoSamples: ImitationRecorder.getInstance().dataset.length,
+      comfortScore: this.latestComfortStatus?.comfortScore,
+      comfortRating: this.latestComfortStatus?.comfortRating,
+      jerkTotal: this.latestComfortStatus?.jerkTotal,
+      energyKwhPer100Km: this.latestComfortStatus?.energyKwhPer100Km,
+      regenPowerKw: this.latestComfortStatus?.regenPowerKw,
+      ncapVerdict: this.euroNCAP.latestVerdict,
+      ncapRunning: this.euroNCAP.isRunning,
+      ncapScenario: this.euroNCAP.activeScenario,
+      ghostBestLapTime: isFinite(this.ghostLapManager.bestLapTime) ? this.ghostLapManager.bestLapTime : undefined,
     };
   }
 

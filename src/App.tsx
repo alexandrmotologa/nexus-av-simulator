@@ -21,6 +21,8 @@ import { TrackEditor } from './core/world/TrackEditor';
 import { TrackEditorDrawer } from './components/TrackEditorDrawer';
 import { CameraFeedHUD } from './components/CameraFeedHUD';
 import { FaultInjectionDrawer } from './components/FaultInjectionDrawer';
+import { EuroNCAPDrawer } from './components/EuroNCAPDrawer';
+import { EuroNCAPScenarioType } from './core/scenarios/EuroNCAPEngine';
 import { TelemetryBridge } from './core/telemetry/TelemetryBridge';
 import { AlertOctagon } from 'lucide-react';
 
@@ -83,6 +85,7 @@ export function App() {
   const [showBlackBoxModal, setShowBlackBoxModal] = useState<boolean>(false);
   const [isTrackEditorOpen, setIsTrackEditorOpen] = useState<boolean>(false);
   const [isFaultDrawerOpen, setIsFaultDrawerOpen] = useState<boolean>(false);
+  const [isNCAPDrawerOpen, setIsNCAPDrawerOpen] = useState<boolean>(false);
   const trackEditorRef = useRef<TrackEditor>(new TrackEditor());
   const draggingWaypointRef = useRef<number>(-1);
 
@@ -214,6 +217,10 @@ export function App() {
           vrus: engine.pedestrianManager.vrus,
           trajectoryBest: engine.latestBestTrajectory,
           trajectoryCandidates: engine.latestCandidateTrajectories,
+          ghostVehicle: engine.ghostLapManager.isReplaying ? engine.ghostLapManager.ghostVehicle : null,
+          heatmapPoints: engine.telemetryHeatmap.points,
+          ncapVehicle: engine.euroNCAP.testVehicle,
+          ncapPedestrian: engine.euroNCAP.testPedestrian,
         }
       );
 
@@ -549,6 +556,35 @@ export function App() {
     reader.readAsText(file);
   };
 
+  const getActiveEgoVehicle = (): VehicleModel => {
+    const engine = engineRef.current;
+    if (!engine) return new VehicleModel();
+    if (followedVehicleRef.current && !followedVehicleRef.current.state.isDamaged) {
+      return followedVehicleRef.current;
+    }
+    if (engine.pilotMode === 'NEUROEVOLUTION') {
+      return engine.geneticEngine.bestAgent?.vehicle || engine.humanVehicle;
+    } else if (engine.pilotMode === 'DEEP_RL_AGENT') {
+      return engine.rlAgent.vehicle;
+    } else if (engine.pilotMode === 'CLASSIC_ROBOTICS') {
+      return engine.classicVehicle;
+    } else if (engine.pilotMode === 'DUEL') {
+      return engine.duelManager.contenders[0]?.vehicle || engine.humanVehicle;
+    }
+    return engine.humanVehicle;
+  };
+
+  const handleStartNCAPScenario = (type: EuroNCAPScenarioType) => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    const ego = getActiveEgoVehicle();
+    engine.euroNCAP.startScenario(type, ego, engine.track);
+  };
+
+  const handleResetNCAP = () => {
+    engineRef.current?.euroNCAP.reset();
+  };
+
   const showSynapse =
     hudView === 'synapse' ||
     hudView === 'both' ||
@@ -735,6 +771,17 @@ export function App() {
         onClose={() => setIsFaultDrawerOpen(false)}
       />
 
+      {/* Euro NCAP Active Safety Benchmark Protocol Drawer */}
+      <EuroNCAPDrawer
+        isOpen={isNCAPDrawerOpen}
+        onClose={() => setIsNCAPDrawerOpen(false)}
+        onStartScenario={handleStartNCAPScenario}
+        onReset={handleResetNCAP}
+        verdict={telemetry.ncapVerdict}
+        isRunning={telemetry.ncapRunning}
+        activeScenario={telemetry.ncapScenario}
+      />
+
       {/* Picture-in-Picture Virtual Front Camera & Real-Time Computer Vision HUD */}
       <CameraFeedHUD
         cameraCanvas={engineRef.current?.virtualCamera.getCanvas() || null}
@@ -752,6 +799,8 @@ export function App() {
           onToggleTrackEditor={() => setIsTrackEditorOpen(!isTrackEditorOpen)}
           isFaultDrawerOpen={isFaultDrawerOpen}
           onToggleFaultDrawer={() => setIsFaultDrawerOpen(!isFaultDrawerOpen)}
+          isNCAPDrawerOpen={isNCAPDrawerOpen}
+          onToggleNCAPDrawer={() => setIsNCAPDrawerOpen(!isNCAPDrawerOpen)}
           trafficDensity={trafficDensity}
           onSetTrafficDensity={handleSetTrafficDensity}
           showLidar={showLidar}

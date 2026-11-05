@@ -27,6 +27,7 @@ import {
   FileJson,
   PenTool,
   ShieldAlert,
+  ShieldCheck,
 } from 'lucide-react';
 
 interface ControlPanelProps {
@@ -38,6 +39,8 @@ interface ControlPanelProps {
   onToggleTrackEditor?: () => void;
   isFaultDrawerOpen?: boolean;
   onToggleFaultDrawer?: () => void;
+  isNCAPDrawerOpen?: boolean;
+  onToggleNCAPDrawer?: () => void;
   trafficDensity: number;
   onSetTrafficDensity: (count: number) => void;
   showLidar: boolean;
@@ -77,6 +80,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   onToggleTrackEditor,
   isFaultDrawerOpen,
   onToggleFaultDrawer,
+  isNCAPDrawerOpen,
+  onToggleNCAPDrawer,
   trafficDensity,
   onSetTrafficDensity,
   showLidar,
@@ -197,6 +202,21 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
           >
             <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
             <span className="hidden xl:inline">{isFaultDrawerOpen ? 'Close Faults' : 'Fault Suite'}</span>
+          </button>
+        )}
+
+        {onToggleNCAPDrawer && (
+          <button
+            onClick={onToggleNCAPDrawer}
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+              isNCAPDrawerOpen
+                ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 shadow-[0_0_10px_rgba(244,63,94,0.3)]'
+                : 'bg-slate-950 border-slate-800 text-slate-300 hover:text-white'
+            }`}
+            title="Euro NCAP Active Safety Benchmark Protocol Suite"
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="hidden xl:inline">{isNCAPDrawerOpen ? 'Close NCAP' : 'Euro NCAP'}</span>
           </button>
         )}
       </div>
