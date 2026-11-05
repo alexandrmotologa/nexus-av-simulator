@@ -864,11 +864,14 @@ export class CanvasRenderer {
     this.ctx.fillRect(rearAxleX - wheelL * 0.5, halfW - wheelW * 0.5, wheelL, wheelW);
     this.ctx.fillRect(rearAxleX - wheelL * 0.5, -halfW - wheelW * 0.5, wheelL, wheelW);
 
-    // Procedural Tire Smoke Particles (Emitted only during authentic high-G lateral skidding or severe emergency lockup braking)
-    const isViolentSkid = v.isSkidding && v.lateralAcc > 14.5 && v.speed > 8.0;
-    const isEmergencyLockup = v.isBraking && v.longitudinalAcc < -8.5 && v.speed > 8.0;
-    if (!v.isDamaged && (isViolentSkid || isEmergencyLockup)) {
-      const intensity = isViolentSkid ? 1.0 : 0.65;
+    // Procedural Tire Smoke Particles (Emitted strictly during genuine high-slip drift or extreme wheel lockup)
+    const isHighAngleDrift = v.isSkidding && Math.abs(v.rearSlipAngle) > 0.48 && v.lateralAcc > 16.5 && v.speed > 10.0;
+    const isSpinout = Math.abs(v.yawRate) > 3.2 && v.speed > 8.0;
+    const isExtremeTireBurn = v.tireTemp > 105.0 && v.isBraking && v.longitudinalAcc < -8.5 && v.speed > 10.0;
+    const isSevereLockup = v.isBraking && v.longitudinalAcc < -12.0 && v.speed > 12.0;
+
+    if (!v.isDamaged && (isHighAngleDrift || isSpinout || isExtremeTireBurn || isSevereLockup)) {
+      const intensity = (isHighAngleDrift || isSpinout) ? 0.85 : 0.45;
       const cosH = Math.cos(v.heading);
       const sinH = Math.sin(v.heading);
       const lrX = v.position.x + cosH * rearAxleX - sinH * (halfW * 0.8);
@@ -896,18 +899,18 @@ export class CanvasRenderer {
     this.ctx.fill();
 
     // 4. Reactive High-Intensity Brake Lights & Asphalt Light Casting
-    const isHardBraking = v.isBraking || (v.speed < -0.1);
+    const isBrakeActive = v.isBraking;
 
-    if (isHardBraking && !v.isDamaged) {
-      // Diffuse red brake light reflection cast onto the asphalt surface
+    if (isBrakeActive && !v.isDamaged) {
+      // Subtle, realistic red brake light reflection cast onto the asphalt surface
       this.ctx.save();
-      const brakeGlow = this.ctx.createRadialGradient(-halfL - 0.5, 0, 0.3, -halfL - 2.5, 0, 4.2);
-      brakeGlow.addColorStop(0, 'rgba(239, 68, 68, 0.55)');
-      brakeGlow.addColorStop(0.5, 'rgba(239, 68, 68, 0.18)');
+      const brakeGlow = this.ctx.createRadialGradient(-halfL - 0.2, 0, 0.2, -halfL - 0.9, 0, 1.6);
+      brakeGlow.addColorStop(0, 'rgba(239, 68, 68, 0.32)');
+      brakeGlow.addColorStop(0.6, 'rgba(239, 68, 68, 0.08)');
       brakeGlow.addColorStop(1, 'rgba(239, 68, 68, 0)');
       this.ctx.fillStyle = brakeGlow;
       this.ctx.beginPath();
-      this.ctx.arc(-halfL - 1.5, 0, 4.2, 0, Math.PI * 2);
+      this.ctx.arc(-halfL - 0.8, 0, 1.6, 0, Math.PI * 2);
       this.ctx.fill();
       this.ctx.restore();
 

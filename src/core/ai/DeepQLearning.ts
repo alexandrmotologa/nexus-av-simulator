@@ -82,8 +82,8 @@ export class DeepQLearningAgent {
   private governor: SafetyGovernor = new SafetyGovernor();
 
   constructor(track: Track) {
-    // 24 inputs -> 32 hidden -> 24 hidden -> 7 action Q-values
-    const topology = [24, 32, 24, 7];
+    // 26 inputs (LiDAR + Speed + Steer + Lane + Threat + SpeedLimitRatio + CurvatureAhead) -> 36 hidden -> 24 hidden -> 7 actions
+    const topology = [26, 36, 24, 7];
     this.policyNet = new BackpropNetwork(topology);
     this.targetNet = new BackpropNetwork(topology);
     this.targetNet.copyFrom(this.policyNet);
@@ -111,13 +111,14 @@ export class DeepQLearningAgent {
     try {
       const payload = {
         weights: this.policyNet.serialize(),
+        topology: [26, 36, 24, 7],
         totalSteps: this.totalSteps,
         totalMistakes: this.totalMistakes,
         mistakesAvoided: this.mistakesAvoided,
         epsilon: this.epsilon,
         timestamp: Date.now(),
       };
-      localStorage.setItem('nexus_av_rl_checkpoint', JSON.stringify(payload));
+      localStorage.setItem('nexus_av_rl_checkpoint_v3', JSON.stringify(payload));
     } catch (e) {
       console.warn('Failed to save RL checkpoint to localStorage', e);
     }
@@ -125,10 +126,10 @@ export class DeepQLearningAgent {
 
   public loadFromStorage(): boolean {
     try {
-      const raw = localStorage.getItem('nexus_av_rl_checkpoint');
+      const raw = localStorage.getItem('nexus_av_rl_checkpoint_v3');
       if (!raw) return false;
       const data = JSON.parse(raw);
-      if (data && data.weights) {
+      if (data && data.weights && Array.isArray(data.topology) && data.topology[0] === 26) {
         this.policyNet.deserialize(data.weights);
         this.targetNet.copyFrom(this.policyNet);
         this.totalSteps = data.totalSteps || 0;
@@ -145,6 +146,7 @@ export class DeepQLearningAgent {
 
   public resetMemory(): void {
     try {
+      localStorage.removeItem('nexus_av_rl_checkpoint_v3');
       localStorage.removeItem('nexus_av_rl_checkpoint');
     } catch {}
     this.totalSteps = 0;
@@ -153,19 +155,19 @@ export class DeepQLearningAgent {
     this.epsilon = 1.0;
     this.generalMemory = [];
     this.mistakeMemory = [];
-    const topology = [24, 32, 24, 7];
+    const topology = [26, 36, 24, 7];
     this.policyNet = new BackpropNetwork(topology);
     this.targetNet = new BackpropNetwork(topology);
     this.targetNet.copyFrom(this.policyNet);
   }
 
-  /** Encodes 24 sensory features (360° LiDAR + Speed + Steer + Lane Offset + Rear Threat) */
+  /** Encodes 26 sensory features (360° LiDAR + Speed + Steer + Lane Offset + Rear Threat + SpeedLimitRatio + CurvatureAhead) */
   public getFeatureVector(track: Track): Float32Array {
     const v = this.vehicle.state;
     const lidarReadings = this.lidar.getReadings();
     const frenet = track.frenet.cartesianToFrenet(v.position, v.heading, v.speed);
 
-    const state = new Float32Array(24);
+    const state = new Float32Array(26);
     // 0-19: 360° LiDAR rays
     for (let i = 0; i < 20; i++) {
       state[i] = lidarReadings[i] ?? 1.0;
@@ -183,6 +185,15 @@ export class DeepQLearningAgent {
 
     // 23: Rear Threat Sensor (detects fast closing vehicles behind)
     state[23] = this.radar.rearThreatLevel;
+
+    // 24: Legal Speed Limit Ratio (current speed vs posted legal speed limit)
+    const legalLimitKmh = track.getSpeedLimitAtDistance(frenet.s);
+    const legalLimitMps = Math.max(5.0, legalLimitKmh / 3.6);
+    state[24] = Math.max(0, Math.min(2.0, v.speed / legalLimitMps));
+
+    // 25: Lookahead Road Curvature (anticipates curves 25m ahead)
+    const aheadState = track.spline.evaluateAtDistance(frenet.s + 25.0);
+    state[25] = Math.min(1.0, Math.abs(aheadState.curvature) * 45.0);
 
     return state;
   }
@@ -419,10 +430,45 @@ export class DeepQLearningAgent {
       };
     }
 
-    // Positive Feedback: Forward progression
+    // 5. Significant Mistake: Exceeding legal speed limit
+    const legalLimitKmh = track.getSpeedLimitAtDistance(frenet.s);
+    const legalLimitMps = legalLimitKmh / 3.6;
+    if (v.speed > legalLimitMps + 0.85) {
+      const overspeed = v.speed - legalLimitMps;
+      return {
+        reward: -4.0 * overspeed,
+        isMistake: true,
+        reason: `Exceeded Legal Speed Limit (${Math.round(v.speed * 3.6)} km/h vs ${legalLimitKmh} km/h posted)`,
+        done: false,
+      };
+    }
+
+    // 6. Significant Mistake: Crossing solid lines
+    const laneA = track.getLaneIndex(frenet.d);
+    const dividerType = track.getDividerTypeAt(Math.max(0, Math.min(track.laneCount - 2, laneA)), frenet.s);
+    if (dividerType === 'DOUBLE_SOLID_YELLOW' && frenet.d < 0 && track.isBidirectional) {
+      return {
+        reward: -8.0,
+        isMistake: true,
+        reason: 'Crossed Double Solid Yellow Centerline (Head-On Hazard)',
+        done: false,
+      };
+    }
+    if (dividerType === 'SOLID_WHITE' && Math.abs(v.steerAngle) > 0.18) {
+      return {
+        reward: -3.0,
+        isMistake: true,
+        reason: 'Unlawful Lane Departure Over Solid White Line',
+        done: false,
+      };
+    }
+
+    // Positive Feedback: Law-abiding forward progression
     let reward = 0;
-    if (v.speed > 2.0) {
-      reward += (v.speed / 10.0) * 1.8;
+    if (v.speed > 2.0 && v.speed <= legalLimitMps) {
+      reward += (v.speed / legalLimitMps) * 2.2;
+    } else if (v.speed > legalLimitMps) {
+      reward -= (v.speed - legalLimitMps) * 2.0;
     } else {
       reward -= 0.6; // Penalize idling
     }

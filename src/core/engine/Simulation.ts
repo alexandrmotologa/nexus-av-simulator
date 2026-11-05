@@ -24,6 +24,7 @@ import { PedestrianManager } from '../traffic/PedestrianManager';
 import { FrenetTrajectoryPlanner, FrenetTrajectory } from '../planning/FrenetTrajectoryPlanner';
 import { FaultInjectionEngine } from '../faults/FaultInjectionEngine';
 import { TelemetryBridge } from '../telemetry/TelemetryBridge';
+import { SafetyGovernor } from '../control/SafetyGovernor';
 
 export type PilotMode = 'NEUROEVOLUTION' | 'DEEP_RL_AGENT' | 'CLASSIC_ROBOTICS' | 'HUMAN_DRIVER' | 'DUEL';
 export type WeatherMode = 'DRY' | 'WET' | 'NIGHT' | 'FOG';
@@ -80,6 +81,8 @@ export class SimulationEngine {
   public classicController: ClassicController;
   public classicVehicle: VehicleModel;
   public classicRadar: RadarSensor;
+  public classicLidar: LidarSensor = new LidarSensor({ rayCount: 20, maxRange: 50.0 });
+  public safetyGovernor: SafetyGovernor = new SafetyGovernor();
   public humanVehicle: VehicleModel;
   public humanLidar: LidarSensor;
   public humanRadar: RadarSensor = new RadarSensor(60.0);
@@ -362,12 +365,24 @@ export class SimulationEngine {
       this.rlAgent.step(dt, this.track, trafficVehicles, obstacles);
     } else if (this.pilotMode === 'CLASSIC_ROBOTICS') {
       this.classicRadar.update(this.classicVehicle, this.track, trafficVehicles);
-      const control = this.classicController.compute(
+      this.classicLidar.update(this.classicVehicle, this.track, trafficVehicles, obstacles);
+      const rawControl = this.classicController.compute(
         this.classicVehicle,
         this.track,
         this.classicRadar
       );
-      this.classicVehicle.step(control, dt);
+      const safeControl = this.safetyGovernor.applySafetyShield(
+        this.classicVehicle,
+        this.track,
+        this.classicLidar,
+        this.classicRadar,
+        trafficVehicles,
+        obstacles,
+        rawControl,
+        dt,
+        this.classicController.config.targetLaneIndex
+      );
+      this.classicVehicle.step(safeControl, dt);
 
       // Check collision with track boundary & obstacles
       if (!this.track.isPointOnRoad(this.classicVehicle.state.position)) {

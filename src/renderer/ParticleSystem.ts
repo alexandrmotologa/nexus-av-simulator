@@ -29,21 +29,22 @@ export class ParticleSystem {
       this.particles.shift(); // Evict oldest
     }
 
-    const count = Math.min(3, Math.max(1, Math.round(intensity * 2)));
+    // Limit emission rate to prevent opaque cloud stacking
+    const count = intensity > 0.7 ? 1 : (Math.random() < 0.5 ? 1 : 0);
     for (let i = 0; i < count; i++) {
       // Slight randomized scatter around tire contact patch
-      const jitter = (Math.random() - 0.5) * 0.4;
+      const jitter = (Math.random() - 0.5) * 0.3;
       const initialPos = new Vector2D(pos.x + jitter, pos.y + jitter);
 
-      // Inherit 20% of car velocity + random drift
+      // Inherit 15% of car velocity + random drift
       const speed = carVelocity.magnitude();
       const driftAngle = Math.random() * Math.PI * 2;
-      const driftSpeed = 0.5 + Math.random() * 1.2;
-      const vx = carVelocity.x * 0.15 + Math.cos(driftAngle) * driftSpeed;
-      const vy = carVelocity.y * 0.15 + Math.sin(driftAngle) * driftSpeed;
+      const driftSpeed = 0.4 + Math.random() * 0.8;
+      const vx = carVelocity.x * 0.12 + Math.cos(driftAngle) * driftSpeed;
+      const vy = carVelocity.y * 0.12 + Math.sin(driftAngle) * driftSpeed;
 
-      const maxLife = 0.5 + Math.random() * 0.4; // 0.5s - 0.9s duration
-      const initialAlpha = isWet ? 0.25 : 0.42 * Math.min(1.0, intensity);
+      const maxLife = 0.4 + Math.random() * 0.3; // 0.4s - 0.7s brief puff
+      const initialAlpha = isWet ? 0.20 : 0.28 * Math.min(1.0, intensity);
 
       this.particles.push({
         position: initialPos,

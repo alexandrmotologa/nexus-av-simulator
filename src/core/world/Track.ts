@@ -200,14 +200,25 @@ export class Track {
           heading: signPos.heading,
         });
 
-        // 50 km/h regulatory speed reduction for sharp corners, 80 km/h for sweeping bends
-        const isSharp = Math.abs(stateAhead.curvature) > 0.012;
-        const speedVal = isSharp ? 50 : 80;
+        // Graduated regulatory speed reduction: 50 km/h for hairpins, 60 for tight turns, 70 for moderate, 80 for bends
+        const absCurv = Math.abs(stateAhead.curvature);
+        let speedVal = 80;
+        let signType: RoadSignType = 'SPEED_LIMIT_80';
+        if (absCurv > 0.012) {
+          speedVal = 50;
+          signType = 'SPEED_LIMIT_50';
+        } else if (absCurv > 0.008) {
+          speedVal = 60;
+          signType = 'SPEED_LIMIT_60';
+        } else if (absCurv > 0.0055) {
+          speedVal = 70;
+          signType = 'SPEED_LIMIT_70';
+        }
         const speedPos = this.frenet.frenetToCartesian(s + 12.0, roadsideD);
 
         this.signs.push({
           id: `sign-speed-${i}`,
-          type: isSharp ? 'SPEED_LIMIT_50' : 'SPEED_LIMIT_80',
+          type: signType,
           s: s + 12.0,
           position: speedPos.position,
           heading: speedPos.heading,
@@ -278,15 +289,16 @@ export class Track {
     const state = this.spline.evaluateAtDistance(s);
     const curvature = Math.abs(state.curvature);
 
-    let isHazardZone = curvature > 0.0055;
+    let isHazardZone = curvature > 0.0048;
     let isWarningApproach = false;
 
     // Check relationship with road signage
     for (const sign of this.signs) {
+      const isSpeedRestriction = sign.speedValue !== undefined && sign.speedValue <= 70;
       const isRestrictionSign =
+        isSpeedRestriction ||
         sign.type === 'SHARP_CURVE_LEFT' ||
         sign.type === 'SHARP_CURVE_RIGHT' ||
-        sign.type === 'SPEED_LIMIT_50' ||
         sign.type === 'NO_OVERTAKING' ||
         sign.type === 'PEDESTRIAN_CROSSING';
 

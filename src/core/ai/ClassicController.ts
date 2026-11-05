@@ -50,7 +50,20 @@ export class ClassicController {
       ego.state.speed
     );
 
-    // 1. Longitudinal Control (ACC + Emergency Braking)
+    // 1. Longitudinal Control (ACC + Legal Speed Limit + Curvature Safety Adaptation)
+    const legalLimitKmh = track.getSpeedLimitAtDistance(frenet.s);
+    const legalLimitMps = legalLimitKmh / 3.6;
+
+    // Anticipate upcoming curve and calculate maximum lateral adhesion entry speed: v = sqrt(a_lat / curvature)
+    const aheadState = track.spline.evaluateAtDistance(frenet.s + 20.0);
+    const curvAhead = Math.abs(aheadState.curvature);
+    const curveSafeSpeed = curvAhead > 0.0035
+      ? Math.sqrt((7.5 * 0.85) / curvAhead)
+      : legalLimitMps;
+
+    const dynamicTargetSpeed = Math.min(this.config.targetSpeed, legalLimitMps, curveSafeSpeed);
+    this.idm.params.desiredSpeed = dynamicTargetSpeed;
+
     let leaderDistance = Infinity;
     let leaderSpeed = 0;
 
