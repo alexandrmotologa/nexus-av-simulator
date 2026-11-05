@@ -10,8 +10,11 @@ import { LidarSensor } from '../sensors/LidarSensor';
 import { ObstacleManager, RoadObstacle } from '../world/Obstacle';
 import { SoundEngine } from '../audio/SoundEngine';
 import { BlackBoxRecorder, IncidentReport } from '../telemetry/BlackBoxRecorder';
+import { BlindSpotDetector, BlindSpotStatus } from '../sensors/BlindSpotDetector';
+import { DuelManager, DuelContender } from './DuelManager';
+import { CoPilotAdvisor, CoPilotIntervention } from '../control/CoPilotAdvisor';
 
-export type PilotMode = 'NEUROEVOLUTION' | 'DEEP_RL_AGENT' | 'CLASSIC_ROBOTICS' | 'HUMAN_DRIVER';
+export type PilotMode = 'NEUROEVOLUTION' | 'DEEP_RL_AGENT' | 'CLASSIC_ROBOTICS' | 'HUMAN_DRIVER' | 'DUEL';
 export type WeatherMode = 'DRY' | 'WET' | 'NIGHT' | 'FOG';
 
 export interface LeaderboardEntry {
@@ -46,6 +49,11 @@ export interface SimulationTelemetry {
   speedCompliance: 'OPTIMAL' | 'WARNING' | 'SPEEDING';
   longitudinalG: number;
   isSkidding: boolean;
+  tireTemp: number;
+  tireStatus: 'COLD' | 'OPTIMAL' | 'OVERHEATED';
+  blindSpot: BlindSpotStatus;
+  coPilotIntervention?: CoPilotIntervention;
+  duelContenders?: DuelContender[];
 }
 
 export class SimulationEngine {
@@ -58,6 +66,10 @@ export class SimulationEngine {
   public classicRadar: RadarSensor;
   public humanVehicle: VehicleModel;
   public humanLidar: LidarSensor;
+  public humanRadar: RadarSensor = new RadarSensor(60.0);
+  public bsd: BlindSpotDetector = new BlindSpotDetector();
+  public duelManager: DuelManager = new DuelManager();
+  public coPilot: CoPilotAdvisor = new CoPilotAdvisor();
 
   public pilotMode: PilotMode = 'NEUROEVOLUTION';
   public timeScale: number = 1.0; // 0 = pause, 1 = normal, 5 = fast
@@ -162,6 +174,8 @@ export class SimulationEngine {
       this.humanVehicle.reset(start.pos, start.heading);
     } else if (mode === 'DEEP_RL_AGENT') {
       this.rlAgent.resetEpisode(this.track);
+    } else if (mode === 'DUEL') {
+      this.duelManager.setupDuel(this.track, this.rlAgent, this.geneticEngine, this.classicController);
     }
   }
 
@@ -206,6 +220,8 @@ export class SimulationEngine {
       activeEgo = this.rlAgent.vehicle;
     } else if (this.pilotMode === 'CLASSIC_ROBOTICS') {
       activeEgo = this.classicVehicle;
+    } else if (this.pilotMode === 'DUEL') {
+      activeEgo = this.duelManager.contenders[0]?.vehicle || this.rlAgent.vehicle;
     } else {
       activeEgo = this.humanVehicle;
     }
@@ -247,6 +263,16 @@ export class SimulationEngine {
           this.classicVehicle.state.isDamaged = true;
         }
       }
+    } else if (this.pilotMode === 'DUEL') {
+      this.duelManager.update(
+        dt,
+        this.track,
+        trafficVehicles,
+        obstacles,
+        this.rlAgent,
+        this.geneticEngine,
+        this.classicController
+      );
     } else if (this.pilotMode === 'HUMAN_DRIVER') {
       // Manual Keyboard Input: W = Accelerate, S = Brake / Reverse, A/D = Steer, R = Reset
       if (this.keysPressed.has('KeyR')) {
@@ -254,14 +280,32 @@ export class SimulationEngine {
         this.humanVehicle.reset(start.pos, start.heading);
       }
 
-      const throttle = this.keysPressed.has('KeyW') || this.keysPressed.has('ArrowUp') ? 1.0 : 0.0;
-      const brake = this.keysPressed.has('KeyS') || this.keysPressed.has('ArrowDown') ? 1.0 : 0.0;
-      let steer = 0;
-      if (this.keysPressed.has('KeyA') || this.keysPressed.has('ArrowLeft')) steer -= 1.0;
-      if (this.keysPressed.has('KeyD') || this.keysPressed.has('ArrowRight')) steer += 1.0;
+      const rawThrottle = this.keysPressed.has('KeyW') || this.keysPressed.has('ArrowUp') ? 1.0 : 0.0;
+      const rawBrake = this.keysPressed.has('KeyS') || this.keysPressed.has('ArrowDown') ? 1.0 : 0.0;
+      let rawSteer = 0;
+      if (this.keysPressed.has('KeyA') || this.keysPressed.has('ArrowLeft')) rawSteer -= 1.0;
+      if (this.keysPressed.has('KeyD') || this.keysPressed.has('ArrowRight')) rawSteer += 1.0;
 
-      this.humanVehicle.step({ throttle, brake, steer }, dt);
+      this.humanRadar.update(this.humanVehicle, this.track, trafficVehicles);
       this.humanLidar.update(this.humanVehicle, this.track, trafficVehicles, obstacles);
+
+      // Level 2+ Shared Autonomy Co-Pilot Active Safety Intervention
+      const safeControl = this.coPilot.supervise(
+        this.humanVehicle,
+        this.track,
+        this.humanLidar,
+        this.humanRadar,
+        trafficVehicles,
+        obstacles,
+        { throttle: rawThrottle, brake: rawBrake, steer: rawSteer },
+        dt
+      );
+
+      if (this.coPilot.lastIntervention.isIntervening) {
+        SoundEngine.getInstance().playCollisionWarningChime();
+      }
+
+      this.humanVehicle.step(safeControl, dt);
 
       // Enforce physical barrier collisions
       this.humanVehicle.enforceTrackBoundary(this.track);
@@ -279,7 +323,8 @@ export class SimulationEngine {
       const isBlinking = v.isBlinkingLeft || v.isBlinkingRight;
       const blinkPhase = Math.floor(v.blinkTimer * 3.5) % 2 === 0;
       const isAEBWarning = v.isBraking && v.speed > 5.0;
-      SoundEngine.getInstance().update(v.speed, v.speed > 0.5 ? 0.7 : 0, isBlinking, blinkPhase, isAEBWarning);
+      const isOnRumble = this.track.checkRumbleContact(v.position, activeEgo.config.width, isBlinking);
+      SoundEngine.getInstance().update(v.speed, v.speed > 0.5 ? 0.7 : 0, isBlinking, blinkPhase, isAEBWarning, isOnRumble);
 
       // 4. Black Box Flight Recorder Telemetry Capture
       BlackBoxRecorder.getInstance().recordFrame({
@@ -345,6 +390,8 @@ export class SimulationEngine {
     let longG = 0;
     let isSkid = false;
     let alive = 0;
+    let tireTemp = 30.0;
+    let tireStatus: 'COLD' | 'OPTIMAL' | 'OVERHEATED' = 'COLD';
 
     if (this.pilotMode === 'NEUROEVOLUTION') {
       alive = this.geneticEngine.population.filter((a) => a.isAlive).length;
@@ -356,6 +403,8 @@ export class SimulationEngine {
         latG = v.lateralAcc / 9.81;
         longG = v.longitudinalAcc / 9.81;
         isSkid = v.isSkidding;
+        tireTemp = v.tireTemp ?? 30.0;
+        tireStatus = v.tireStatus ?? 'COLD';
       }
     } else if (this.pilotMode === 'DEEP_RL_AGENT') {
       const v = this.rlAgent.vehicle.state;
@@ -366,6 +415,8 @@ export class SimulationEngine {
       latG = v.lateralAcc / 9.81;
       longG = v.longitudinalAcc / 9.81;
       isSkid = v.isSkidding;
+      tireTemp = v.tireTemp ?? 30.0;
+      tireStatus = v.tireStatus ?? 'COLD';
     } else if (this.pilotMode === 'CLASSIC_ROBOTICS') {
       const v = this.classicVehicle.state;
       alive = v.isDamaged ? 0 : 1;
@@ -375,6 +426,22 @@ export class SimulationEngine {
       latG = v.lateralAcc / 9.81;
       longG = v.longitudinalAcc / 9.81;
       isSkid = v.isSkidding;
+      tireTemp = v.tireTemp ?? 30.0;
+      tireStatus = v.tireStatus ?? 'COLD';
+    } else if (this.pilotMode === 'DUEL') {
+      const leader = this.duelManager.contenders[0];
+      alive = this.duelManager.contenders.filter((c) => !c.vehicle.state.isDamaged).length;
+      if (leader) {
+        const v = leader.vehicle.state;
+        bestSpeed = v.speed * 3.6;
+        bestDist = leader.distance;
+        steerAngle = (v.steerAngle * 180) / Math.PI;
+        latG = v.lateralAcc / 9.81;
+        longG = v.longitudinalAcc / 9.81;
+        isSkid = v.isSkidding;
+        tireTemp = v.tireTemp ?? 30.0;
+        tireStatus = v.tireStatus ?? 'COLD';
+      }
     } else {
       const v = this.humanVehicle.state;
       alive = v.isDamaged ? 0 : 1;
@@ -384,6 +451,8 @@ export class SimulationEngine {
       latG = v.lateralAcc / 9.81;
       longG = v.longitudinalAcc / 9.81;
       isSkid = v.isSkidding;
+      tireTemp = v.tireTemp ?? 30.0;
+      tireStatus = v.tireStatus ?? 'COLD';
     }
 
     const leaderboard: LeaderboardEntry[] = [];
@@ -404,14 +473,17 @@ export class SimulationEngine {
     }
 
     // Evaluate active sector speed limit and legal compliance
-    let egoPos = this.humanVehicle.state.position;
+    let activeVehicle = this.humanVehicle;
     if (this.pilotMode === 'NEUROEVOLUTION' && this.geneticEngine.bestAgent) {
-      egoPos = this.geneticEngine.bestAgent.vehicle.state.position;
+      activeVehicle = this.geneticEngine.bestAgent.vehicle;
     } else if (this.pilotMode === 'DEEP_RL_AGENT') {
-      egoPos = this.rlAgent.vehicle.state.position;
+      activeVehicle = this.rlAgent.vehicle;
     } else if (this.pilotMode === 'CLASSIC_ROBOTICS') {
-      egoPos = this.classicVehicle.state.position;
+      activeVehicle = this.classicVehicle;
+    } else if (this.pilotMode === 'DUEL') {
+      activeVehicle = this.duelManager.contenders[0]?.vehicle || this.rlAgent.vehicle;
     }
+    const egoPos = activeVehicle.state.position;
 
     const frenet = this.track.frenet.cartesianToFrenet(egoPos, 0, 0);
     const activeSpeedLimit = this.track.getSpeedLimitAtDistance(frenet.s);
@@ -420,6 +492,12 @@ export class SimulationEngine {
       speedCompliance = 'SPEEDING';
     } else if (bestSpeed > activeSpeedLimit) {
       speedCompliance = 'WARNING';
+    }
+
+    // 360-degree Blind Spot Detection evaluation
+    const blindSpot = this.bsd.evaluate(activeVehicle, this.trafficManager.getVehicles());
+    if (blindSpot.leftCritical || blindSpot.rightCritical) {
+      SoundEngine.getInstance().playCollisionWarningChime();
     }
 
     return {
@@ -444,6 +522,11 @@ export class SimulationEngine {
       speedCompliance,
       longitudinalG: parseFloat(longG.toFixed(2)),
       isSkidding: isSkid,
+      tireTemp,
+      tireStatus,
+      blindSpot,
+      coPilotIntervention: this.pilotMode === 'HUMAN_DRIVER' ? this.coPilot.lastIntervention : undefined,
+      duelContenders: this.pilotMode === 'DUEL' ? [...this.duelManager.contenders] : undefined,
     };
   }
 

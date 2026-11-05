@@ -40,6 +40,8 @@ export class VehicleState {
   public isBlinkingRight: boolean = false;
   public isBraking: boolean = false;
   public blinkTimer: number = 0;
+  public tireTemp: number = 30.0;
+  public tireStatus: 'COLD' | 'OPTIMAL' | 'OVERHEATED' = 'COLD';
 
   constructor(initialPos: Vector2D, initialHeading: number = 0) {
     this.position = initialPos.clone();

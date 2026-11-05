@@ -14,6 +14,9 @@ import { VehicleModel } from './core/physics/VehicleModel';
 import { SoundEngine } from './core/audio/SoundEngine';
 import { BlackBoxModal } from './components/BlackBoxModal';
 import { BlackBoxRecorder, IncidentReport } from './core/telemetry/BlackBoxRecorder';
+import { SensorFusionEngine } from './core/sensors/SensorFusion';
+import { DuelLeaderboard } from './components/DuelLeaderboard';
+import { TelemetryExporter } from './core/telemetry/TelemetryExporter';
 import { AlertOctagon } from 'lucide-react';
 
 export function App() {
@@ -43,6 +46,16 @@ export function App() {
     speedCompliance: 'OPTIMAL',
     longitudinalG: 0,
     isSkidding: false,
+    tireTemp: 30.0,
+    tireStatus: 'COLD',
+    blindSpot: {
+      leftOccupied: false,
+      rightOccupied: false,
+      leftCritical: false,
+      rightCritical: false,
+      closestLeftDistance: 0,
+      closestRightDistance: 0,
+    },
   });
 
   const [timeScale, setTimeScale] = useState<number>(1.0);
@@ -50,7 +63,9 @@ export function App() {
   const [trafficDensity, setTrafficDensity] = useState<number>(8);
   const [showLidar, setShowLidar] = useState<boolean>(true);
   const [showDividers, setShowDividers] = useState<boolean>(true);
+  const [showBoundingBoxes, setShowBoundingBoxes] = useState<boolean>(true);
   const [isTraining, setIsTraining] = useState<boolean>(false);
+  const fusionEngineRef = useRef<SensorFusionEngine>(new SensorFusionEngine());
   const [hudView, setHudView] = useState<'auto' | 'synapse' | 'rl' | 'both'>('auto');
 
   // New interactive states
@@ -143,6 +158,10 @@ export function App() {
         defaultLeadVehicle = engine.classicVehicle;
         egoVehicles = [engine.classicVehicle];
         lidarSensors = [null];
+      } else if (engine.pilotMode === 'DUEL') {
+        defaultLeadVehicle = engine.duelManager.contenders[0]?.vehicle || null;
+        egoVehicles = engine.duelManager.getVehicles();
+        lidarSensors = engine.duelManager.contenders.map((c) => c.lidar);
       } else {
         defaultLeadVehicle = engine.humanVehicle;
         egoVehicles = [engine.humanVehicle];
@@ -159,6 +178,13 @@ export function App() {
         renderer.camera.follow(activeFollow.state.position, realDt);
       }
 
+      // 360-degree Sensor Fusion Object Tracking
+      const trackedEntities = fusionEngineRef.current.trackSurroundingEntities(
+        activeFollow || engine.humanVehicle,
+        engine.trafficManager.getVehicles(),
+        engine.obstacleManager.obstacles
+      );
+
       renderer.render(
         engine.track,
         egoVehicles,
@@ -172,6 +198,8 @@ export function App() {
           activeFollowVehicle: activeFollow,
           obstacles: engine.obstacleManager.obstacles,
           weather: engine.weather,
+          showBoundingBoxes,
+          trackedEntities,
         }
       );
 
@@ -600,6 +628,24 @@ export function App() {
         </div>
       )}
 
+      {/* Grand Prix Tri-Duel Championship Standings */}
+      {telemetry.pilotMode === 'DUEL' && telemetry.duelContenders && (
+        <DuelLeaderboard
+          contenders={telemetry.duelContenders}
+          raceTime={engineRef.current?.duelManager.raceTime || 0}
+          selectedId={followedVehicleRef.current?.config.id}
+          onSelectVehicle={(id) => {
+            const match = engineRef.current?.duelManager.contenders.find(
+              (c) => c.vehicle.config.id === id
+            );
+            if (match) {
+              followedVehicleRef.current = match.vehicle;
+              setIsCameraLocked(true);
+            }
+          }}
+        />
+      )}
+
       {/* Flight Recorder Incident Diagnostic Modal */}
       {showBlackBoxModal && activeIncident && (
         <BlackBoxModal
@@ -625,6 +671,8 @@ export function App() {
           onToggleLidar={() => setShowLidar(!showLidar)}
           showDividers={showDividers}
           onToggleDividers={() => setShowDividers(!showDividers)}
+          showBoundingBoxes={showBoundingBoxes}
+          onToggleBoundingBoxes={() => setShowBoundingBoxes(!showBoundingBoxes)}
           onReset={handleReset}
           onFastTrain={handleFastTrain}
           isTraining={isTraining}
@@ -636,6 +684,8 @@ export function App() {
           onClearObstacles={handleClearObstacles}
           onExportBrain={handleExportBrain}
           onImportBrain={handleImportBrain}
+          onDownloadCSV={TelemetryExporter.downloadCSV}
+          onDownloadJSON={TelemetryExporter.downloadJSON}
           isCameraLocked={isCameraLocked}
           onSnapCamera={handleSnapCamera}
           onZoomIn={handleZoomIn}

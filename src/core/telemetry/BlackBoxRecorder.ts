@@ -17,6 +17,8 @@ export interface BlackBoxFrame {
   closingSpeed: number;
 }
 
+export type FlightTelemetryFrame = BlackBoxFrame;
+
 export interface IncidentReport {
   id: string;
   timestamp: number;
@@ -79,6 +81,10 @@ export class BlackBoxRecorder {
     };
 
     return this.activeIncident;
+  }
+
+  public getHistory(): BlackBoxFrame[] {
+    return [...this.buffer];
   }
 
   public clear(): void {

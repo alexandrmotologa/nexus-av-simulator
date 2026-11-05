@@ -12,6 +12,11 @@ export class SoundEngine {
   private motorGain: GainNode | null = null;
   private motorFilter: BiquadFilterNode | null = null;
 
+  // Rumble Strip Audio Nodes (Low-frequency grooved tarmac buzz)
+  private rumbleOsc: OscillatorNode | null = null;
+  private rumbleGain: GainNode | null = null;
+  private rumbleFilter: BiquadFilterNode | null = null;
+
   // State Tracking
   private lastBlinkPhase: boolean = false;
   private lastAlertTime: number = 0;
@@ -57,6 +62,24 @@ export class SoundEngine {
       this.motorGain.connect(this.ctx.destination);
 
       this.motorOsc.start();
+
+      // Master Rumble Strip Synthesizer Setup (Grooved kerb buzz)
+      this.rumbleOsc = this.ctx.createOscillator();
+      this.rumbleOsc.type = 'sawtooth';
+      this.rumbleOsc.frequency.setValueAtTime(45, this.ctx.currentTime);
+
+      this.rumbleFilter = this.ctx.createBiquadFilter();
+      this.rumbleFilter.type = 'lowpass';
+      this.rumbleFilter.frequency.setValueAtTime(160, this.ctx.currentTime);
+
+      this.rumbleGain = this.ctx.createGain();
+      this.rumbleGain.gain.setValueAtTime(0, this.ctx.currentTime);
+
+      this.rumbleOsc.connect(this.rumbleFilter);
+      this.rumbleFilter.connect(this.rumbleGain);
+      this.rumbleGain.connect(this.ctx.destination);
+
+      this.rumbleOsc.start();
       this.isInitialized = true;
     } catch {
       // Audio not supported in environment
@@ -66,8 +89,9 @@ export class SoundEngine {
   public toggleMute(): boolean {
     this.init();
     this.isMuted = !this.isMuted;
-    if (this.isMuted && this.motorGain && this.ctx) {
-      this.motorGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
+    if (this.isMuted && this.ctx) {
+      if (this.motorGain) this.motorGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
+      if (this.rumbleGain) this.rumbleGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
     }
     return this.isMuted;
   }
@@ -80,7 +104,8 @@ export class SoundEngine {
     throttle: number, // 0 to 1
     isBlinking: boolean,
     blinkPhase: boolean,
-    isAEBWarning: boolean
+    isAEBWarning: boolean,
+    isOnRumble: boolean = false
   ): void {
     if (this.isMuted || !this.isInitialized || !this.ctx || !this.motorGain || !this.motorOsc) return;
 
@@ -97,6 +122,17 @@ export class SoundEngine {
     // Motor volume: gentle hum at standstill, swells with throttle and high speed
     const baseVolume = Math.abs(speed) > 0.5 ? 0.02 + throttle * 0.04 : 0.0;
     this.motorGain.gain.setTargetAtTime(Math.min(0.065, baseVolume), now, 0.08);
+
+    // 2. Grooved Kerb / Rumble Strip Vibration Audio
+    if (this.rumbleGain && this.rumbleOsc) {
+      if (isOnRumble && Math.abs(speed) > 2.5) {
+        const rumbleFreq = Math.max(38, Math.min(110, 35 + Math.abs(speed) * 2.2));
+        this.rumbleOsc.frequency.setTargetAtTime(rumbleFreq, now, 0.03);
+        this.rumbleGain.gain.setTargetAtTime(0.048, now, 0.03);
+      } else {
+        this.rumbleGain.gain.setTargetAtTime(0, now, 0.04);
+      }
+    }
 
     // 2. Turn Signal Indicator Clicker ("tic" / "tac" sound)
     if (isBlinking && blinkPhase !== this.lastBlinkPhase) {

@@ -252,4 +252,30 @@ export class Track {
     const halfWidth = this.totalWidth * 0.5;
     return Math.abs(closest.d) <= halfWidth;
   }
+
+  /**
+   * Checks whether the vehicle's tires are riding on outer rumble strips or crossing medians without signaling.
+   */
+  public checkRumbleContact(pos: Vector2D, carWidth: number, isBlinking: boolean): boolean {
+    const closest = this.spline.findClosestPoint(pos);
+    const halfRoadWidth = this.totalWidth * 0.5;
+    const halfCarWidth = carWidth * 0.5;
+    const leftTireD = closest.d + halfCarWidth;
+    const rightTireD = closest.d - halfCarWidth;
+
+    // Outer kerb / rumble strip zone (outer 0.9 meters along road edge)
+    const isLeftKerb = Math.abs(leftTireD) >= halfRoadWidth - 0.9 && Math.abs(leftTireD) <= halfRoadWidth + 0.5;
+    const isRightKerb = Math.abs(rightTireD) >= halfRoadWidth - 0.9 && Math.abs(rightTireD) <= halfRoadWidth + 0.5;
+    if (isLeftKerb || isRightKerb) return true;
+
+    // Center median rumble if touching double solid yellow without blinker
+    if (this.isBidirectional && !isBlinking) {
+      const medianD = halfRoadWidth - this.oncomingLaneCount * this.laneWidth;
+      if (Math.abs(closest.d - medianD) < 0.4) {
+        return true;
+      }
+    }
+
+    return false;
+  }
 }

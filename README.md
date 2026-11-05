@@ -34,6 +34,16 @@ The simulator implements numerical vehicle dynamics, geometric collision checks 
 ## Visual Previews
 
 <div align="center">
+  <img src="docs/images/nexus_av_tri_duel.png" alt="Grand Prix Tri-Duel Mode" width="800" />
+  <p><i>Grand Prix Tri-Duel: Deep RL, NeuroBot GA, and Stanley Robot racing concurrently with live championship leaderboard.</i></p>
+</div>
+
+<div align="center">
+  <img src="docs/images/nexus_av_sensor_fusion.png" alt="Multi-Sensor Fusion Object Tracking" width="800" />
+  <p><i>Sensor Fusion visualizer rendering 2D bounding boxes, velocity vectors, and threat classifications for surrounding obstacles and traffic.</i></p>
+</div>
+
+<div align="center">
   <img src="docs/images/nexus_av_telemetry.png" alt="Telemetry View" width="800" />
   <p><i>Real-time cockpit telemetry with 360-degree LiDAR perception beams and active circuit radar.</i></p>
 </div>
@@ -86,17 +96,17 @@ Surrounding civilian traffic operates autonomously through coupled macroscopic a
 ## Driving AI Paradigms
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        NEXUS AV PILOT MODES                            │
-├────────────────────┬────────────────────┬──────────────────────────────┤
-│ 1. Neuroevolution  │ 2. Deep RL Agent   │ 3. Classic Stanley Robot     │
-│    (Genetic Alg)   │    (Mistake DQN)   │    (Path Tracking + ACC)     │
-├────────────────────┼────────────────────┼──────────────────────────────┤
-│ • Population of 35 │ • 24 input features│ • Cross-track error ($e_y$)  │
-│ • Elitism pool     │ • 7 discrete moves │ • Yaw error ($\theta_e$)     │
-│ • Gaussian weights │ • Prioritized replay│ • Dynamic velocity profile  │
-│ • Fitness metrics  │ • Persistent store │ • AEB safety fallback        │
-└────────────────────┴────────────────────┴──────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                 NEXUS AV PILOT MODES                                   │
+├────────────────────┬────────────────────┬──────────────────────┬───────────────────────┤
+│ 1. Neuroevolution  │ 2. Deep RL Agent   │ 3. Classic Stanley   │ 4. Grand Prix Tri-Duel│
+│    (Genetic Alg)   │    (Mistake DQN)   │    (Path Tracking)   │    (Concurrent Race)  │
+├────────────────────┼────────────────────┼──────────────────────┼───────────────────────┤
+│ • Population of 35 │ • 24 input features│ • Cross-track ($e_y$)│ • RL vs GA vs Stanley │
+│ • Elitism pool     │ • 7 discrete moves │ • Yaw error ($\theta$)│ • Live gap times      │
+│ • Gaussian weights │ • Prioritized replay│ • Dynamic velocity  │ • Camera focus lock   │
+│ • Fitness metrics  │ • Persistent store │ • AEB safety guard   │ • Multi-lap standings │
+└────────────────────┴────────────────────┴──────────────────────┴───────────────────────┘
 ```
 
 ### Neuroevolution (Genetic Algorithm)
@@ -115,13 +125,27 @@ Surrounding civilian traffic operates autonomously through coupled macroscopic a
   $$\delta(t) = \theta_e(t) + \arctan\left(\frac{k \cdot e_y(t)}{v(t) + \epsilon}\right)$$
 * Couples lateral guidance with Adaptive Cruise Control (ACC) and Autonomous Emergency Braking (AEB).
 
-### Manual Driver
-* Direct human control through keyboard inputs (`W` throttle, `S` brake/reverse, `A`/`D` steering, `R` reset).
+### Level 2+ Shared Autonomy Co-Pilot
+* Active supervisory layer in manual keyboard driving mode.
+* Continuous forward obstacle projection evaluates closing velocity and collision risk.
+* Automatically triggers Emergency Barrier Counter-Steer and Automatic Emergency Braking (AEB) when the human driver steers dangerously toward perimeter barriers or obstacles.
+
+### Grand Prix Tri-Duel Championship
+* Pits Deep RL, NeuroBot GA, and Stanley Robot head-to-head on the same track with concurrent physics execution.
+* Tracks lap progress, gap-to-leader timing in seconds, speed telemetry, and positions (P1, P2, P3).
+* Interactive leaderboard allows one-click camera focus lock onto any competitor.
 
 ---
 
 ## Interactive Features
 
+* **Procedural Tire Skid Smoke System**: Emits semi-transparent smoke particles from rear contact patches during high lateral slip or heavy braking. Particles expand radially with aerodynamic drag and opacity decay.
+* **Kerb Rumble Strip Acoustics**: Synthesizes tactile rumble strip audio (35 Hz to 110 Hz sawtooth with resonant lowpass filter) whenever tires cross painted outer kerbs or double-yellow median dividers.
+* **Tire Thermal Model**: Calculates thermodynamic tire surface temperatures between 24°C and 135°C based on friction work and convective cooling. Dynamically scales lateral grip (cold compound: 82%, optimal 75°C to 95°C: 100%, overheated: 72%).
+* **Blind Spot Detection (BSD)**: Evaluates 360-degree adjacent traffic sectors (-5.0m to +1.5m longitudinal, 1.4m to 4.5m lateral). Activates left and right cockpit HUD indicators with obstacle proximity readouts and audible chime alerts.
+* **Multi-Sensor Fusion Visualizer**: Clusters LiDAR returns and Doppler radar vectors into tracked obstacle hulls. Renders 2D bounding boxes, velocity direction arrows, and threat warning levels.
+* **Telemetry Exporter**: Exports flight recorder history directly to CSV spreadsheet format or structured JSON diagnostic packages for external analysis.
+* **Multi-Track Preset Library**: Includes Monza Apex GP, Neo Tokyo Expressway, Alpine Slalom, Infinite Highway Benchmark, Pacific Two-Way Arterial (6 lanes), and Transfăgărășan Two-Way Pass (4 lanes with oncoming traffic).
 * **Procedural Web Audio Engine**: Synthesizes real-time vehicle acoustics with zero external sound files using the Web Audio API. Generates velocity-modulated electric motor whine (70 Hz to 850 Hz), dual-tone relay turn signal clicks (1150 Hz / 820 Hz), and dual-frequency ADAS collision alert chimes (880 Hz and 1175 Hz). Includes a quick mute toggle.
 * **Roadside Signage and Speed Limit Compliance**: Renders European circular regulatory signs (50, 80, 90, 120 km/h) and triangular curve warnings on roadside posts. The Cockpit HUD displays the active sector speed limit with real-time legal compliance badges (Legal, At Limit, Overspeed).
 * **Kamm Friction Circle (G-G Diagram)**: Real-time telemetry dial displaying longitudinal acceleration ($a_x$) against lateral acceleration ($a_y$) with 0.5G, 1.0G, and 1.2G concentric tire grip boundaries, dynamic trail vectors, and numeric readouts.

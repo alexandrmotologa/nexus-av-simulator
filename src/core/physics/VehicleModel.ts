@@ -1,6 +1,7 @@
 import { Vector2D } from '../math/Vector2D';
 import { VehicleConfig, VehicleState, ControlInput } from './VehicleState';
 import { Track } from '../world/Track';
+import { TireThermalModel } from './TireThermalModel';
 
 export const DEFAULT_VEHICLE_CONFIG: VehicleConfig = {
   id: 'ego-sedan',
@@ -22,6 +23,7 @@ export const DEFAULT_VEHICLE_CONFIG: VehicleConfig = {
 export class VehicleModel {
   public state: VehicleState;
   public config: VehicleConfig;
+  public tireThermals: TireThermalModel = new TireThermalModel();
 
   constructor(
     config: Partial<VehicleConfig> = {},
@@ -124,9 +126,15 @@ export class VehicleModel {
     this.state.position.y += dy;
     this.state.velocity.set(dx / dt, dy / dt);
 
-    // 4. Lateral G-force & tire grip check
+    // 4. Lateral G-force & thermodynamic tire grip check
     this.state.lateralAcc = Math.abs(this.state.speed * this.state.yawRate);
-    this.state.isSkidding = this.state.lateralAcc > this.config.tireGripCoeff;
+    const lateralG = this.state.lateralAcc / 9.81;
+    this.tireThermals.update(dt, this.state.speed, this.state.isSkidding, this.state.isBraking, lateralG);
+    this.state.tireTemp = parseFloat(this.tireThermals.temperature.toFixed(1));
+    this.state.tireStatus = this.tireThermals.getStatus();
+
+    const dynamicGrip = this.config.tireGripCoeff * this.tireThermals.getGripMultiplier();
+    this.state.isSkidding = this.state.lateralAcc > dynamicGrip;
 
     // 5. Update boundary polygon for collisions and rendering
     this.updatePolygon();
@@ -197,6 +205,9 @@ export class VehicleModel {
     this.state.isDamaged = false;
     this.state.isSkidding = false;
     this.state.totalDistance = 0;
+    this.tireThermals.reset();
+    this.state.tireTemp = this.tireThermals.temperature;
+    this.state.tireStatus = this.tireThermals.getStatus();
     this.updatePolygon();
   }
 }

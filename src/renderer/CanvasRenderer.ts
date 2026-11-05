@@ -5,6 +5,8 @@ import { LidarSensor } from '../core/sensors/LidarSensor';
 import { Vector2D } from '../core/math/Vector2D';
 import { RoadObstacle } from '../core/world/Obstacle';
 import { RoadSign } from '../core/world/RoadSign';
+import { ParticleSystem } from './ParticleSystem';
+import { TrackedEntity } from '../core/sensors/SensorFusion';
 
 export interface RenderOptions {
   showLidar: boolean;
@@ -14,12 +16,15 @@ export interface RenderOptions {
   activeFollowVehicle: VehicleModel | null;
   obstacles?: RoadObstacle[];
   weather?: 'DRY' | 'WET' | 'NIGHT' | 'FOG';
+  showBoundingBoxes?: boolean;
+  trackedEntities?: TrackedEntity[];
 }
 
 export class CanvasRenderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   public camera: Camera;
+  public particles: ParticleSystem = new ParticleSystem();
   private skidmarks: { p1: Vector2D; p2: Vector2D; alpha: number }[] = [];
   private rainDrops: { x: number; y: number; l: number; s: number }[] = [];
 
@@ -92,8 +97,10 @@ export class CanvasRenderer {
     // 1. Render Track (Asphalt surface, curbs, dividers)
     this.renderTrack(track, options);
 
-    // 2. Render Skidmarks
+    // 2. Render Skidmarks & Procedural Tire Smoke Particles
     this.renderSkidmarks();
+    this.particles.update(0.016);
+    this.particles.render(this.ctx);
 
     // 3. Render NPC Traffic Vehicles
     for (const traffic of trafficVehicles) {
@@ -132,6 +139,11 @@ export class CanvasRenderer {
       }
     }
 
+    // 5b. Render Sensor Fusion Tracked Entity Bounding Boxes & Velocity Vectors
+    if (options.showBoundingBoxes && options.trackedEntities) {
+      this.renderSensorFusionBoxes(options.trackedEntities);
+    }
+
     this.ctx.restore();
 
     // 6. Weather Screen Effects (Rain Streaks / Fog Clouds)
@@ -139,6 +151,87 @@ export class CanvasRenderer {
       this.renderRainEffect();
     } else if (options.weather === 'FOG') {
       this.renderFogEffect();
+    }
+  }
+
+  private renderSensorFusionBoxes(entities: TrackedEntity[]): void {
+    for (const entity of entities) {
+      if (entity.polygon.length < 3) continue;
+
+      this.ctx.save();
+      const isThreat = entity.isThreat;
+      const strokeColor = isThreat ? '#f43f5e' : '#06b6d4';
+      const fillColor = isThreat ? 'rgba(244, 63, 94, 0.08)' : 'rgba(6, 182, 212, 0.08)';
+
+      // 1. Polygon Bounding Box
+      this.ctx.beginPath();
+      this.ctx.moveTo(entity.polygon[0].x, entity.polygon[0].y);
+      for (let i = 1; i < entity.polygon.length; i++) {
+        this.ctx.lineTo(entity.polygon[i].x, entity.polygon[i].y);
+      }
+      this.ctx.closePath();
+
+      this.ctx.fillStyle = fillColor;
+      this.ctx.fill();
+
+      this.ctx.strokeStyle = strokeColor;
+      this.ctx.lineWidth = 0.22;
+      this.ctx.setLineDash([0.6, 0.3]);
+      this.ctx.stroke();
+      this.ctx.setLineDash([]);
+
+      // 2. Velocity Vector Arrow
+      if (entity.velocityVector.magnitudeSq() > 0.01) {
+        this.ctx.beginPath();
+        this.ctx.moveTo(entity.position.x, entity.position.y);
+        const arrowEnd = entity.position.add(entity.velocityVector);
+        this.ctx.lineTo(arrowEnd.x, arrowEnd.y);
+        this.ctx.strokeStyle = strokeColor;
+        this.ctx.lineWidth = 0.28;
+        this.ctx.stroke();
+
+        // Arrow head
+        const arrowAngle = entity.velocityVector.angle();
+        const headL = 0.6;
+        this.ctx.beginPath();
+        this.ctx.moveTo(arrowEnd.x, arrowEnd.y);
+        this.ctx.lineTo(
+          arrowEnd.x - headL * Math.cos(arrowAngle - 0.45),
+          arrowEnd.y - headL * Math.sin(arrowAngle - 0.45)
+        );
+        this.ctx.moveTo(arrowEnd.x, arrowEnd.y);
+        this.ctx.lineTo(
+          arrowEnd.x - headL * Math.cos(arrowAngle + 0.45),
+          arrowEnd.y - headL * Math.sin(arrowAngle + 0.45)
+        );
+        this.ctx.stroke();
+      }
+
+      // 3. Floating HUD Object Telemetry Pill
+      const label = entity.type === 'NPC_VEHICLE'
+        ? `${entity.speedKmH} km/h · ${entity.distance}m`
+        : `CONE · ${entity.distance}m`;
+
+      this.ctx.save();
+      this.ctx.translate(entity.position.x, entity.position.y - 2.2);
+      this.ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+      this.ctx.strokeStyle = strokeColor;
+      this.ctx.lineWidth = 0.15;
+
+      const textW = label.length * 0.48;
+      this.ctx.beginPath();
+      this.ctx.roundRect(-textW * 0.5, -0.65, textW, 1.2, 0.3);
+      this.ctx.fill();
+      this.ctx.stroke();
+
+      this.ctx.fillStyle = '#f8fafc';
+      this.ctx.font = 'bold 0.62px monospace';
+      this.ctx.textAlign = 'center';
+      this.ctx.textBaseline = 'middle';
+      this.ctx.fillText(label, 0, -0.05);
+      this.ctx.restore();
+
+      this.ctx.restore();
     }
   }
 
@@ -510,6 +603,19 @@ export class CanvasRenderer {
     // Rear Wheels (fixed)
     this.ctx.fillRect(rearAxleX - wheelL * 0.5, halfW - wheelW * 0.5, wheelL, wheelW);
     this.ctx.fillRect(rearAxleX - wheelL * 0.5, -halfW - wheelW * 0.5, wheelL, wheelW);
+
+    // Procedural Tire Smoke Particles (Emitted during lateral slip or violent deceleration)
+    if (!v.isDamaged && (v.isSkidding || (v.isBraking && v.speed > 6.0))) {
+      const intensity = v.isSkidding ? 1.0 : 0.6;
+      const cosH = Math.cos(v.heading);
+      const sinH = Math.sin(v.heading);
+      const lrX = v.position.x + cosH * rearAxleX - sinH * (halfW * 0.8);
+      const lrY = v.position.y + sinH * rearAxleX + cosH * (halfW * 0.8);
+      const rrX = v.position.x + cosH * rearAxleX - sinH * (-halfW * 0.8);
+      const rrY = v.position.y + sinH * rearAxleX + cosH * (-halfW * 0.8);
+      this.particles.emitSmoke(new Vector2D(lrX, lrY), v.velocity, intensity, weather === 'WET');
+      this.particles.emitSmoke(new Vector2D(rrX, rrY), v.velocity, intensity, weather === 'WET');
+    }
 
     // 3. Vehicle Chassis (Aerodynamic Sports Body)
     this.ctx.beginPath();
