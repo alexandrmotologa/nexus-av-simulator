@@ -40,6 +40,7 @@ export class EuroNCAPEngine {
   public maxDecelG: number = 0;
   public collisionOccurred: boolean = false;
   public latestVerdict: EuroNCAPVerdict | null = null;
+  public decelHistory: { time: number; decelG: number }[] = [];
 
   /**
    * Starts a standardized Euro NCAP active safety protocol
@@ -57,6 +58,7 @@ export class EuroNCAPEngine {
     this.minClearance = Infinity;
     this.minTTC = Infinity;
     this.maxDecelG = 0;
+    this.decelHistory = [];
 
     const egoFrenet = track.frenet.cartesianToFrenet(
       ego.state.position,
@@ -143,11 +145,16 @@ export class EuroNCAPEngine {
       ego.state.speed
     );
 
-    // Track maximum deceleration
+    // Track maximum deceleration and live telemetry curve
     const currentDecelG = Math.max(0, -ego.state.longitudinalAcc / 9.81);
     if (currentDecelG > this.maxDecelG) {
       this.maxDecelG = currentDecelG;
     }
+    this.decelHistory.push({
+      time: parseFloat(this.elapsedTime.toFixed(2)),
+      decelG: parseFloat(currentDecelG.toFixed(2)),
+    });
+    if (this.decelHistory.length > 80) this.decelHistory.shift();
 
     // 1. Cut-In Scenario Dynamics
     if (this.activeScenario === 'CUT_IN_EMERGENCY' && this.testVehicle) {
@@ -323,5 +330,6 @@ export class EuroNCAPEngine {
     this.minClearance = Infinity;
     this.minTTC = Infinity;
     this.maxDecelG = 0;
+    this.decelHistory = [];
   }
 }

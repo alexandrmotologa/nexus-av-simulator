@@ -88,6 +88,7 @@ export function App() {
   const [isFaultDrawerOpen, setIsFaultDrawerOpen] = useState<boolean>(false);
   const [isNCAPDrawerOpen, setIsNCAPDrawerOpen] = useState<boolean>(false);
   const [isPlatoonDrawerOpen, setIsPlatoonDrawerOpen] = useState<boolean>(false);
+  const [cameraViewMode, setCameraViewMode] = useState<'FRONT' | 'REAR' | 'BEV'>('FRONT');
   const trackEditorRef = useRef<TrackEditor>(new TrackEditor());
   const draggingWaypointRef = useRef<number>(-1);
 
@@ -115,6 +116,7 @@ export function App() {
     const renderer = new CanvasRenderer(canvas);
     engineRef.current = engine;
     rendererRef.current = renderer;
+    (window as any).__engine = engine;
 
     const handleResize = () => {
       renderer.resize(window.innerWidth, window.innerHeight);
@@ -614,6 +616,13 @@ export function App() {
     engineRef.current?.platoonManager.setTimeHeadway(headwaySec);
   };
 
+  const handleSelectCameraViewMode = (mode: 'FRONT' | 'REAR' | 'BEV') => {
+    setCameraViewMode(mode);
+    if (engineRef.current) {
+      engineRef.current.cameraViewMode = mode;
+    }
+  };
+
   const handleTriggerPlatoonManeuver = (direction: 'LEFT' | 'RIGHT') => {
     const engine = engineRef.current;
     if (!engine) return;
@@ -815,6 +824,7 @@ export function App() {
         verdict={telemetry.ncapVerdict}
         isRunning={telemetry.ncapRunning}
         activeScenario={telemetry.ncapScenario}
+        decelHistory={telemetry.ncapDecelHistory}
       />
 
       {/* Connected V2V Cooperative Platoon Suite Drawer */}
@@ -828,10 +838,12 @@ export function App() {
         onTriggerManeuver={handleTriggerPlatoonManeuver}
       />
 
-      {/* Picture-in-Picture Virtual Front Camera & Real-Time Computer Vision HUD */}
+      {/* Picture-in-Picture Virtual Surround Camera & Real-Time Computer Vision HUD */}
       <CameraFeedHUD
         cameraCanvas={engineRef.current?.virtualCamera.getCanvas() || null}
         visionResult={telemetry.visionResult || null}
+        cameraViewMode={cameraViewMode}
+        onSelectCameraViewMode={handleSelectCameraViewMode}
       />
 
       {/* Bottom Mission Control Panel */}

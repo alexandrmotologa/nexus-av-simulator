@@ -1,4 +1,5 @@
 import { Track } from '../world/Track';
+import { Vector2D } from '../math/Vector2D';
 import { TRACK_PRESETS } from '../world/TrackPresets';
 import { TrafficManager } from '../traffic/TrafficManager';
 import { GeneticEngine } from '../ai/GeneticAlgorithm';
@@ -84,6 +85,7 @@ export interface SimulationTelemetry {
   ncapVerdict?: EuroNCAPVerdict | null;
   ncapRunning?: boolean;
   ncapScenario?: EuroNCAPScenarioType;
+  ncapDecelHistory?: { time: number; decelG: number }[];
   ghostBestLapTime?: number;
   platoon?: PlatoonTelemetry;
 }
@@ -135,6 +137,7 @@ export class SimulationEngine {
   public keysPressed: Set<string> = new Set();
   public obstacleManager: ObstacleManager = new ObstacleManager();
   public weather: WeatherMode = 'DRY';
+  public cameraViewMode: 'FRONT' | 'REAR' | 'BEV' = 'FRONT';
   public fitnessHistory: { gen: number; fitness: number; speed: number }[] = [];
   private lastRecordedGen: number = 1;
 
@@ -303,20 +306,53 @@ export class SimulationEngine {
 
     this.cameraFrameCounter++;
     if (this.cameraFrameCounter % 2 === 0) {
-      const frame = this.virtualCamera.render(
-        activeEgo,
-        this.track,
-        this.obstacleManager.obstacles,
-        this.trafficManager.getVehicles(),
-        this.weather
-      );
-      // Apply optical fault injections (lens dirt / direct solar glare)
-      FaultInjectionEngine.getInstance().applyToCamera(
-        this.virtualCamera.getContext(),
-        frame.width,
-        frame.height
-      );
-      this.latestVisionResult = this.visionProcessor.process(frame.imageData);
+      let lidarHits: Vector2D[] = [];
+      if (this.pilotMode === 'HUMAN_DRIVER') {
+        lidarHits = this.humanLidar.hits.filter((h) => h.hitType !== 'none').map((h) => h.point);
+      } else if (this.pilotMode === 'CLASSIC_ROBOTICS') {
+        lidarHits = this.classicLidar.hits.filter((h) => h.hitType !== 'none').map((h) => h.point);
+      } else if (this.pilotMode === 'NEUROEVOLUTION') {
+        const best = this.geneticEngine.bestAgent;
+        if (best) lidarHits = best.sensor.hits.filter((h) => h.hitType !== 'none').map((h) => h.point);
+      } else if (this.pilotMode === 'DEEP_RL_AGENT') {
+        lidarHits = this.rlAgent.lidar.hits.filter((h) => h.hitType !== 'none').map((h) => h.point);
+      }
+
+      let frame;
+      if (this.cameraViewMode === 'REAR') {
+        frame = this.virtualCamera.renderRear(
+          activeEgo,
+          this.track,
+          this.obstacleManager.obstacles,
+          this.trafficManager.getVehicles(),
+          this.weather
+        );
+        this.latestVisionResult = null;
+      } else if (this.cameraViewMode === 'BEV') {
+        frame = this.virtualCamera.renderBEV(
+          activeEgo,
+          this.track,
+          this.obstacleManager.obstacles,
+          this.trafficManager.getVehicles(),
+          lidarHits
+        );
+        this.latestVisionResult = null;
+      } else {
+        frame = this.virtualCamera.render(
+          activeEgo,
+          this.track,
+          this.obstacleManager.obstacles,
+          this.trafficManager.getVehicles(),
+          this.weather
+        );
+        // Apply optical fault injections (lens dirt / direct solar glare)
+        FaultInjectionEngine.getInstance().applyToCamera(
+          this.virtualCamera.getContext(),
+          frame.width,
+          frame.height
+        );
+        this.latestVisionResult = this.visionProcessor.process(frame.imageData);
+      }
     }
 
     // Plan Frenet optimal trajectory lattice periodically
@@ -576,11 +612,45 @@ export class SimulationEngine {
         this.telemetryHeatmap.clear();
       }
       const v = activeEgo.state;
+      let closestDistance = 25.0;
+      let closingSpeed = 0;
+      if (this.pilotMode === 'HUMAN_DRIVER') {
+        if (this.humanRadar.targetDetected) {
+          closestDistance = this.humanRadar.targetDistance;
+          closingSpeed = this.humanRadar.closingSpeed;
+        }
+      } else if (this.pilotMode === 'CLASSIC_ROBOTICS') {
+        if (this.classicRadar.targetDetected) {
+          closestDistance = this.classicRadar.targetDistance;
+          closingSpeed = this.classicRadar.closingSpeed;
+        }
+      } else if (this.pilotMode === 'NEUROEVOLUTION') {
+        const best = this.geneticEngine.bestAgent;
+        if (best && best.radar.targetDetected) {
+          closestDistance = best.radar.targetDistance;
+          closingSpeed = best.radar.closingSpeed;
+        }
+      } else if (this.pilotMode === 'DEEP_RL_AGENT') {
+        if (this.rlAgent.radar.targetDetected) {
+          closestDistance = this.rlAgent.radar.targetDistance;
+          closingSpeed = this.rlAgent.radar.closingSpeed;
+        }
+      }
+
       const isBlinking = v.isBlinkingLeft || v.isBlinkingRight;
       const blinkPhase = Math.floor(v.blinkTimer * 3.5) % 2 === 0;
       const isAEBWarning = v.isBraking && v.speed > 5.0;
       const isOnRumble = this.track.checkRumbleContact(v.position, activeEgo.config.width, isBlinking);
-      SoundEngine.getInstance().update(v.speed, v.speed > 0.5 ? 0.7 : 0, isBlinking, blinkPhase, isAEBWarning, isOnRumble);
+      SoundEngine.getInstance().update(
+        v.speed,
+        v.speed > 0.5 ? 0.7 : 0,
+        isBlinking,
+        blinkPhase,
+        isAEBWarning,
+        isOnRumble,
+        v.isSkidding,
+        closestDistance
+      );
       if (isOnRumble) {
         GamepadController.getInstance().vibrate(0.45, 0.2, 60);
       }
@@ -597,8 +667,8 @@ export class SimulationEngine {
         throttle: v.speed > 0.5 ? 0.8 : 0,
         brake: v.isBraking ? 1.0 : 0,
         isDamaged: v.isDamaged,
-        closestDistance: 25.0,
-        closingSpeed: 0,
+        closestDistance: parseFloat(closestDistance.toFixed(1)),
+        closingSpeed: parseFloat(closingSpeed.toFixed(1)),
       });
 
       if (v.isDamaged) {
@@ -823,6 +893,7 @@ export class SimulationEngine {
       ncapVerdict: this.euroNCAP.latestVerdict,
       ncapRunning: this.euroNCAP.isRunning,
       ncapScenario: this.euroNCAP.activeScenario,
+      ncapDecelHistory: [...this.euroNCAP.decelHistory],
       ghostBestLapTime: isFinite(this.ghostLapManager.bestLapTime) ? this.ghostLapManager.bestLapTime : undefined,
       platoon: this.platoonManager.getTelemetry(),
     };

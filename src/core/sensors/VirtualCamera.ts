@@ -150,6 +150,218 @@ export class VirtualCamera {
     };
   }
 
+  /**
+   * Renders the rear backup camera perspective with dynamic trajectory guidelines.
+   */
+  public renderRear(
+    ego: VehicleModel,
+    track: Track,
+    obstacles: RoadObstacle[],
+    traffic: VehicleModel[],
+    weather: WeatherMode
+  ): CameraFrame {
+    const ctx = this.ctx;
+    const w = this.width;
+    const h = this.height;
+    const horizonY = h * 0.44;
+
+    const bumperDist = ego.config.length * 0.48;
+    const camHeading = ego.state.heading + Math.PI;
+    const camPos = new Vector2D(
+      ego.state.position.x - Math.cos(ego.state.heading) * bumperDist,
+      ego.state.position.y - Math.sin(ego.state.heading) * bumperDist
+    );
+
+    const isNight = weather === 'NIGHT';
+    const isWet = weather === 'WET';
+    const isFog = weather === 'FOG';
+
+    ctx.fillStyle = isNight ? '#030712' : isFog ? '#94a3b8' : '#38bdf8';
+    ctx.fillRect(0, 0, w, horizonY);
+
+    ctx.fillStyle = isNight ? '#0b0f19' : isWet ? '#1e293b' : '#334155';
+    ctx.fillRect(0, horizonY, w, h - horizonY);
+
+    this.renderRoadSurface(track, camPos, camHeading, isNight, isWet);
+    this.renderLaneMarkings(track, camPos, camHeading, isNight, isWet);
+    this.renderObstacles(obstacles, camPos, camHeading);
+    this.renderVehicles(traffic, ego, camPos, camHeading);
+
+    // Dynamic Backup Trajectory Guidelines
+    const steer = ego.state.steerAngle;
+    const curveCurvature = Math.tan(steer) / Math.max(1.0, ego.config.wheelbase);
+    const halfWidthM = 1.0;
+
+    ctx.lineWidth = 1.5;
+    for (const side of [-halfWidthM, halfWidthM]) {
+      ctx.beginPath();
+      for (let dist = 1.8; dist <= 14.0; dist += 0.9) {
+        const lateralArc = side - 0.5 * curveCurvature * dist * dist;
+        const ptLocal = new Vector2D(-dist, -lateralArc);
+        const cosH = Math.cos(ego.state.heading);
+        const sinH = Math.sin(ego.state.heading);
+        const worldPt = new Vector2D(
+          ego.state.position.x + ptLocal.x * cosH - ptLocal.y * sinH,
+          ego.state.position.y + ptLocal.x * sinH + ptLocal.y * cosH
+        );
+        const proj = this.projectPoint(worldPt, camPos, camHeading);
+        if (proj) {
+          if (dist === 1.8) ctx.moveTo(proj.x, proj.y);
+          else ctx.lineTo(proj.x, proj.y);
+        }
+      }
+      ctx.strokeStyle = '#22c55e';
+      ctx.stroke();
+    }
+
+    // Distance cross-bars (Red at 2m, Yellow at 4m, Green at 7m)
+    for (const [dist, color] of [[2.0, '#ef4444'], [4.0, '#eab308'], [7.0, '#22c55e']] as const) {
+      const lateralArcL = -halfWidthM - 0.5 * curveCurvature * dist * dist;
+      const lateralArcR = halfWidthM - 0.5 * curveCurvature * dist * dist;
+      const cosH = Math.cos(ego.state.heading);
+      const sinH = Math.sin(ego.state.heading);
+      const wL = new Vector2D(
+        ego.state.position.x - dist * cosH + lateralArcL * sinH,
+        ego.state.position.y - dist * sinH - lateralArcL * cosH
+      );
+      const wR = new Vector2D(
+        ego.state.position.x - dist * cosH + lateralArcR * sinH,
+        ego.state.position.y - dist * sinH - lateralArcR * cosH
+      );
+      const pL = this.projectPoint(wL, camPos, camHeading);
+      const pR = this.projectPoint(wR, camPos, camHeading);
+      if (pL && pR) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(pL.x, pL.y);
+        ctx.lineTo(pR.x, pR.y);
+        ctx.stroke();
+      }
+    }
+
+    const imageData = ctx.getImageData(0, 0, w, h);
+    return { canvas: this.canvas, imageData, width: w, height: h };
+  }
+
+  /**
+   * Renders the Bird's Eye View (BEV) 360° sensor occupancy grid.
+   */
+  public renderBEV(
+    ego: VehicleModel,
+    track: Track,
+    obstacles: RoadObstacle[],
+    traffic: VehicleModel[],
+    lidarHits: Vector2D[]
+  ): CameraFrame {
+    const ctx = this.ctx;
+    const w = this.width;
+    const h = this.height;
+
+    ctx.fillStyle = '#060a12';
+    ctx.fillRect(0, 0, w, h);
+
+    const centerX = w * 0.5;
+    const centerY = h * 0.55;
+    const pixelsPerMeter = 3.2;
+
+    // Polar Radar Distance Rings (10m, 20m, 30m)
+    ctx.lineWidth = 0.8;
+    for (const rM of [10, 20, 30]) {
+      const rPx = rM * pixelsPerMeter;
+      ctx.strokeStyle = 'rgba(6, 182, 212, 0.22)';
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, rPx, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.fillStyle = 'rgba(6, 182, 212, 0.45)';
+      ctx.font = '7px monospace';
+      ctx.fillText(`${rM}m`, centerX + 2, centerY - rPx + 8);
+    }
+
+    ctx.strokeStyle = 'rgba(6, 182, 212, 0.15)';
+    ctx.beginPath();
+    ctx.moveTo(centerX, 0);
+    ctx.lineTo(centerX, h);
+    ctx.moveTo(0, centerY);
+    ctx.lineTo(w, centerY);
+    ctx.stroke();
+
+    const uForward = Vector2D.fromAngle(ego.state.heading);
+    const uRight = new Vector2D(-uForward.y, uForward.x);
+    const egoPos = ego.state.position;
+
+    const toBEV = (worldPt: Vector2D): { x: number; y: number } => {
+      const d = worldPt.sub(egoPos);
+      const xLocal = d.dot(uRight);
+      const yLocal = -d.dot(uForward);
+      return {
+        x: centerX + xLocal * pixelsPerMeter,
+        y: centerY + yLocal * pixelsPerMeter,
+      };
+    };
+
+    // Render LiDAR laser hits
+    ctx.fillStyle = '#10b981';
+    for (const hit of lidarHits) {
+      const p = toBEV(hit);
+      if (p.x >= 0 && p.x < w && p.y >= 0 && p.y < h) {
+        ctx.fillRect(p.x - 1, p.y - 1, 2, 2);
+      }
+    }
+
+    // Render Obstacles in BEV
+    for (const obs of obstacles) {
+      const p = toBEV(obs.position);
+      ctx.fillStyle = '#f59e0b';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, Math.max(2, obs.radius * pixelsPerMeter), 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Render Traffic Vehicles in BEV
+    for (const t of traffic) {
+      if (t === ego) continue;
+      const p = toBEV(t.state.position);
+      if (p.x < -10 || p.x > w + 10 || p.y < -10 || p.y > h + 10) continue;
+
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      const relHeading = t.state.heading - ego.state.heading - Math.PI * 0.5;
+      ctx.rotate(relHeading);
+      ctx.fillStyle = t.config.color || '#94a3b8';
+      ctx.fillRect(
+        -t.config.width * 0.5 * pixelsPerMeter,
+        -t.config.length * 0.5 * pixelsPerMeter,
+        t.config.width * pixelsPerMeter,
+        t.config.length * pixelsPerMeter
+      );
+      ctx.restore();
+    }
+
+    // Render Ego Vehicle in center (Cyan sports silhouette)
+    ctx.save();
+    ctx.translate(centerX, centerY);
+    const halfW = ego.config.width * 0.5 * pixelsPerMeter;
+    const halfL = ego.config.length * 0.5 * pixelsPerMeter;
+    ctx.fillStyle = '#06b6d4';
+    ctx.beginPath();
+    ctx.roundRect(-halfW, -halfL, halfW * 2, halfL * 2, 2);
+    ctx.fill();
+
+    ctx.fillStyle = 'rgba(56, 189, 248, 0.12)';
+    ctx.beginPath();
+    ctx.moveTo(0, -halfL);
+    ctx.lineTo(-w * 0.35, -h * 0.45);
+    ctx.lineTo(w * 0.35, -h * 0.45);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    const imageData = ctx.getImageData(0, 0, w, h);
+    return { canvas: this.canvas, imageData, width: w, height: h };
+  }
+
   private renderRoadSurface(
     track: Track,
     camPos: Vector2D,

@@ -17,9 +17,15 @@ export class SoundEngine {
   private rumbleGain: GainNode | null = null;
   private rumbleFilter: BiquadFilterNode | null = null;
 
+  // Tire Squeal / Slip Nodes (High-frequency friction scrub)
+  private tireOsc: OscillatorNode | null = null;
+  private tireGain: GainNode | null = null;
+  private tireFilter: BiquadFilterNode | null = null;
+
   // State Tracking
   private lastBlinkPhase: boolean = false;
   private lastAlertTime: number = 0;
+  private lastPdcBeepTime: number = 0;
   private isInitialized: boolean = false;
 
   public static getInstance(): SoundEngine {
@@ -80,6 +86,25 @@ export class SoundEngine {
       this.rumbleGain.connect(this.ctx.destination);
 
       this.rumbleOsc.start();
+
+      // Master Tire Squeal Synthesizer (Friction cornering scrub)
+      this.tireOsc = this.ctx.createOscillator();
+      this.tireOsc.type = 'sawtooth';
+      this.tireOsc.frequency.setValueAtTime(620, this.ctx.currentTime);
+
+      this.tireFilter = this.ctx.createBiquadFilter();
+      this.tireFilter.type = 'bandpass';
+      this.tireFilter.frequency.setValueAtTime(1400, this.ctx.currentTime);
+      this.tireFilter.Q.setValueAtTime(3.0, this.ctx.currentTime);
+
+      this.tireGain = this.ctx.createGain();
+      this.tireGain.gain.setValueAtTime(0, this.ctx.currentTime);
+
+      this.tireOsc.connect(this.tireFilter);
+      this.tireFilter.connect(this.tireGain);
+      this.tireGain.connect(this.ctx.destination);
+      this.tireOsc.start();
+
       this.isInitialized = true;
     } catch {
       // Audio not supported in environment
@@ -92,6 +117,7 @@ export class SoundEngine {
     if (this.isMuted && this.ctx) {
       if (this.motorGain) this.motorGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
       if (this.rumbleGain) this.rumbleGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
+      if (this.tireGain) this.tireGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
     }
     return this.isMuted;
   }
@@ -105,7 +131,9 @@ export class SoundEngine {
     isBlinking: boolean,
     blinkPhase: boolean,
     isAEBWarning: boolean,
-    isOnRumble: boolean = false
+    isOnRumble: boolean = false,
+    isSkidding: boolean = false,
+    closestObstacleDist: number = Infinity
   ): void {
     if (this.isMuted || !this.isInitialized || !this.ctx || !this.motorGain || !this.motorOsc) return;
 
@@ -134,17 +162,61 @@ export class SoundEngine {
       }
     }
 
-    // 2. Turn Signal Indicator Clicker ("tic" / "tac" sound)
+    // 3. Dynamic Tire Scrub & Skid Audio
+    if (this.tireGain && this.tireOsc) {
+      if (isSkidding && Math.abs(speed) > 2.5) {
+        const screechFreq = Math.max(550, Math.min(1800, 600 + Math.abs(speed) * 35.0));
+        this.tireOsc.frequency.setTargetAtTime(screechFreq, now, 0.04);
+        this.tireGain.gain.setTargetAtTime(0.045, now, 0.04);
+      } else {
+        this.tireGain.gain.setTargetAtTime(0, now, 0.05);
+      }
+    }
+
+    // 4. Ultrasonic Radar Proximity Warning (PDC Beeps)
+    if (closestObstacleDist < 12.0 && closestObstacleDist > 0.3 && Math.abs(speed) > 0.3) {
+      const nowMs = performance.now();
+      const intervalMs = Math.max(70, Math.min(550, closestObstacleDist * 45.0));
+      if (nowMs - this.lastPdcBeepTime >= intervalMs) {
+        this.lastPdcBeepTime = nowMs;
+        this.playProximityBeep(closestObstacleDist < 1.5);
+      }
+    }
+
+    // 5. Turn Signal Indicator Clicker ("tic" / "tac" sound)
     if (isBlinking && blinkPhase !== this.lastBlinkPhase) {
       this.lastBlinkPhase = blinkPhase;
       this.playIndicatorClick(blinkPhase);
     }
 
-    // 3. ADAS Emergency Collision Warning Chime (Two-tone alert)
+    // 6. ADAS Emergency Collision Warning Chime (Two-tone alert)
     if (isAEBWarning && performance.now() - this.lastAlertTime > 650) {
       this.lastAlertTime = performance.now();
       this.playCollisionWarningChime();
     }
+  }
+
+  /**
+   * Ultrasonic Parking Distance Control (PDC) Beep (single chime or continuous solid tone)
+   */
+  public playProximityBeep(isContinuous: boolean): void {
+    if (this.isMuted || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(isContinuous ? 1200 : 950, now);
+    const duration = isContinuous ? 0.06 : 0.035;
+
+    gain.gain.setValueAtTime(0.035, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + duration + 0.005);
   }
 
   /**

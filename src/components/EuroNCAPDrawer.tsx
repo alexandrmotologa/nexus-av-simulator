@@ -10,6 +10,7 @@ interface EuroNCAPDrawerProps {
   verdict?: EuroNCAPVerdict | null;
   isRunning?: boolean;
   activeScenario?: EuroNCAPScenarioType;
+  decelHistory?: { time: number; decelG: number }[];
 }
 
 export const EuroNCAPDrawer: React.FC<EuroNCAPDrawerProps> = ({
@@ -20,6 +21,7 @@ export const EuroNCAPDrawer: React.FC<EuroNCAPDrawerProps> = ({
   verdict,
   isRunning = false,
   activeScenario = 'NONE',
+  decelHistory = [],
 }) => {
   if (!isOpen) return null;
 
@@ -40,14 +42,49 @@ export const EuroNCAPDrawer: React.FC<EuroNCAPDrawerProps> = ({
         Standardized active safety protocols certifying AEB collision avoidance and dynamic electronic stability control.
       </p>
 
-      {/* Active Running Banner */}
+      {/* Active Running Banner & Live Deceleration Telemetry Graph */}
       {isRunning && (
-        <div className="mb-3 p-2 rounded-lg bg-rose-950/60 border border-rose-500/50 flex items-center justify-between animate-pulse">
-          <div className="flex items-center gap-2 text-rose-300 font-bold text-[11px]">
-            <Activity className="w-3.5 h-3.5 text-rose-400 animate-spin" />
-            <span>TEST PROTOCOL IN PROGRESS...</span>
+        <div className="mb-3 space-y-2">
+          <div className="p-2 rounded-lg bg-rose-950/60 border border-rose-500/50 flex items-center justify-between animate-pulse">
+            <div className="flex items-center gap-2 text-rose-300 font-bold text-[11px]">
+              <Activity className="w-3.5 h-3.5 text-rose-400 animate-spin" />
+              <span>TEST PROTOCOL IN PROGRESS...</span>
+            </div>
+            <span className="text-[10px] text-rose-400 font-semibold">{activeScenario}</span>
           </div>
-          <span className="text-[10px] text-rose-400 font-semibold">{activeScenario}</span>
+
+          <div className="bg-slate-950 p-2.5 rounded-lg border border-rose-500/40 shadow-inner">
+            <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1.5 font-bold">
+              <span className="flex items-center gap-1.5 text-rose-400">
+                <Gauge className="w-3.5 h-3.5 text-rose-400" /> DECELERATION TELEMETRY (G)
+              </span>
+              <span className="text-slate-200 font-mono">
+                PEAK: {decelHistory.length > 0 ? Math.max(...decelHistory.map((d) => d.decelG)).toFixed(2) : '0.00'} G
+              </span>
+            </div>
+            <div className="relative w-full h-14 bg-slate-900/80 rounded border border-slate-800 overflow-hidden flex items-end px-1 pb-1">
+              <svg className="w-full h-full" viewBox="0 0 340 60" preserveAspectRatio="none">
+                <line x1="0" y1="30" x2="340" y2="30" stroke="rgba(255,255,255,0.08)" strokeDasharray="4 4" />
+                <polyline
+                  fill="none"
+                  stroke="#f43f5e"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  points={
+                    decelHistory.length > 1
+                      ? decelHistory.map((d, i) => `${(i / (decelHistory.length - 1)) * 340},${Math.max(4, 56 - (d.decelG / 1.4) * 52)}`).join(' ')
+                      : '0,56 340,56'
+                  }
+                />
+              </svg>
+            </div>
+            <div className="flex items-center justify-between text-[9px] text-slate-500 mt-1 font-mono">
+              <span>0.0s (Initiation)</span>
+              <span className="text-rose-400 font-semibold">1.4G Threshold</span>
+              <span>Live: {decelHistory.length > 0 ? decelHistory[decelHistory.length - 1].decelG.toFixed(2) : '0.00'} G</span>
+            </div>
+          </div>
         </div>
       )}
 
