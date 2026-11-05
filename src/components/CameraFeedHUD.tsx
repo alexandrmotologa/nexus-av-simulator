@@ -125,7 +125,7 @@ export const CameraFeedHUD: React.FC<CameraFeedHUDProps> = ({
   }, [cameraCanvas, visionResult, visionMode, cameraViewMode]);
 
   return (
-    <div className="absolute bottom-20 right-4 z-30 flex flex-col items-end">
+    <div className="hidden sm:flex absolute bottom-[86px] right-4 z-30 flex-col items-end">
       {/* HUD Header Bar */}
       <div className="flex items-center justify-between w-72 bg-slate-900/95 backdrop-blur-md border border-slate-800 rounded-t-lg px-2.5 py-1.5 font-mono text-[11px] text-slate-300 shadow-xl">
         {/* Surround View Mode Selector */}

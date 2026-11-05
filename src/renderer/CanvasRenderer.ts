@@ -522,7 +522,7 @@ export class CanvasRenderer {
     for (const sign of signs) {
       this.ctx.save();
       this.ctx.translate(sign.position.x, sign.position.y);
-      this.ctx.rotate(sign.heading + Math.PI * 0.5);
+      // Render sign face upright in world space so regulatory numerals and icons are always readable
 
       // 1. Post Shadow & Mounting Pole
       this.ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';

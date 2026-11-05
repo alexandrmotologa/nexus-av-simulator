@@ -228,21 +228,21 @@ export class DeepQLearningAgent {
   public actionToControl(action: number): ControlInput {
     switch (action) {
       case 0: // Cruise
-        return { throttle: 0.4, brake: 0, steer: 0 };
+        return { throttle: 0.45, brake: 0, steer: 0 };
       case 1: // Accelerate
         return { throttle: 1.0, brake: 0, steer: 0 };
       case 2: // Brake
-        return { throttle: 0, brake: 0.9, steer: 0 };
+        return { throttle: 0, brake: 0.85, steer: 0 };
       case 3: // Soft Left
         return { throttle: 0.55, brake: 0, steer: -0.45 };
-      case 4: // Hard Left
-        return { throttle: 0.3, brake: 0.1, steer: -1.0 };
+      case 4: // Hard Left (maintain forward momentum without stalling)
+        return { throttle: 0.50, brake: 0, steer: -0.9 };
       case 5: // Soft Right
         return { throttle: 0.55, brake: 0, steer: 0.45 };
-      case 6: // Hard Right
-        return { throttle: 0.3, brake: 0.1, steer: 1.0 };
+      case 6: // Hard Right (maintain forward momentum without stalling)
+        return { throttle: 0.50, brake: 0, steer: 0.9 };
       default:
-        return { throttle: 0.35, brake: 0, steer: 0 };
+        return { throttle: 0.4, brake: 0, steer: 0 };
     }
   }
 
@@ -431,10 +431,10 @@ export class DeepQLearningAgent {
       }
     }
 
-    // 3. Stalling / Traffic Obstruction Watchdog
+    // 3. Stalling / Traffic Obstruction Watchdog (allows ~3.0s recovery on starts or hairpins)
     if (v.speed < 1.0) {
       this.idleSteps++;
-      if (this.idleSteps > 110) {
+      if (this.idleSteps > 180) {
         v.isDamaged = true;
         this.idleSteps = 0;
         return {

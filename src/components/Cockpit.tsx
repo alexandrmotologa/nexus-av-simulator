@@ -9,7 +9,7 @@ interface CockpitProps {
 
 export const Cockpit: React.FC<CockpitProps> = ({ telemetry, onSetPilotMode }) => {
   return (
-    <div className="flex flex-nowrap items-center justify-between gap-2.5 bg-slate-900/95 border border-slate-800 rounded-xl px-3.5 h-[52px] shadow-2xl backdrop-blur-md overflow-hidden select-none">
+    <div className="flex flex-nowrap items-center justify-between gap-2.5 bg-slate-900/95 border border-slate-800 rounded-xl px-3.5 h-[52px] shadow-2xl backdrop-blur-md overflow-x-auto no-scrollbar select-none">
       {/* Pilot Mode Switcher */}
       <div className="flex-shrink-0 flex items-center gap-1 bg-slate-950/80 p-0.5 rounded-lg border border-slate-800">
         <button
@@ -21,7 +21,8 @@ export const Cockpit: React.FC<CockpitProps> = ({ telemetry, onSetPilotMode }) =
           }`}
         >
           <Sparkles className="w-3.5 h-3.5 text-cyan-300" />
-          <span>Self-Learning RL</span>
+          <span className="hidden sm:inline">Self-Learning RL</span>
+          <span className="sm:hidden">RL</span>
         </button>
 
         <button
@@ -33,7 +34,8 @@ export const Cockpit: React.FC<CockpitProps> = ({ telemetry, onSetPilotMode }) =
           }`}
         >
           <Cpu className="w-3.5 h-3.5" />
-          <span>Neuro AI (GA)</span>
+          <span className="hidden sm:inline">Neuro AI (GA)</span>
+          <span className="sm:hidden">GA</span>
         </button>
 
         <button
@@ -45,7 +47,8 @@ export const Cockpit: React.FC<CockpitProps> = ({ telemetry, onSetPilotMode }) =
           }`}
         >
           <Bot className="w-3.5 h-3.5" />
-          <span>Stanley Robot</span>
+          <span className="hidden sm:inline">Stanley Robot</span>
+          <span className="sm:hidden">Stanley</span>
         </button>
 
         <button
@@ -57,7 +60,8 @@ export const Cockpit: React.FC<CockpitProps> = ({ telemetry, onSetPilotMode }) =
           }`}
         >
           <User className="w-3.5 h-3.5" />
-          <span>Manual (WASD)</span>
+          <span className="hidden sm:inline">Manual (WASD)</span>
+          <span className="sm:hidden">Manual</span>
         </button>
 
         <button
@@ -70,7 +74,8 @@ export const Cockpit: React.FC<CockpitProps> = ({ telemetry, onSetPilotMode }) =
           title="Grand Prix Tri-Duel: Deep RL vs. NeuroBot GA vs. Stanley Robot"
         >
           <Swords className="w-3.5 h-3.5 text-rose-300" />
-          <span>Tri-Duel GP</span>
+          <span className="hidden sm:inline">Tri-Duel GP</span>
+          <span className="sm:hidden">Duel</span>
         </button>
       </div>
 
@@ -83,7 +88,7 @@ export const Cockpit: React.FC<CockpitProps> = ({ telemetry, onSetPilotMode }) =
               <Gauge className="w-3.5 h-3.5" />
             </div>
             <div>
-              <div className="text-[9px] uppercase tracking-wider text-slate-400 leading-none">Velocity</div>
+              <div className="hidden xl:block text-[9px] uppercase tracking-wider text-slate-400 leading-none">Velocity</div>
               <div className="text-base font-bold tabular-nums leading-tight min-w-[56px]">
                 {telemetry.currentBestSpeed}{' '}
                 <span className="text-[10px] font-normal text-slate-500">km/h</span>
@@ -106,7 +111,7 @@ export const Cockpit: React.FC<CockpitProps> = ({ telemetry, onSetPilotMode }) =
               {telemetry.activeSpeedLimit || 90}
             </div>
             <div className="hidden md:block">
-              <div className="text-[9px] uppercase tracking-wider text-slate-500 leading-none">Limit</div>
+              <div className="hidden xl:block text-[9px] uppercase tracking-wider text-slate-500 leading-none">Limit</div>
               <div
                 className={`text-[9px] font-bold uppercase tracking-wider min-w-[48px] ${
                   telemetry.speedCompliance === 'SPEEDING'
@@ -162,7 +167,7 @@ export const Cockpit: React.FC<CockpitProps> = ({ telemetry, onSetPilotMode }) =
             />
           </div>
           <div>
-            <div className="text-[9px] uppercase tracking-wider text-slate-400 leading-none">Steer Angle</div>
+            <div className="hidden xl:block text-[9px] uppercase tracking-wider text-slate-400 leading-none">Steer Angle</div>
             <div className="text-base font-bold tabular-nums min-w-[50px] leading-tight">
               {telemetry.steerAngleDeg > 0 ? `+${telemetry.steerAngleDeg}` : telemetry.steerAngleDeg}°
             </div>
@@ -175,7 +180,7 @@ export const Cockpit: React.FC<CockpitProps> = ({ telemetry, onSetPilotMode }) =
             <Compass className="w-3.5 h-3.5" />
           </div>
           <div>
-            <div className="text-[9px] uppercase tracking-wider text-slate-400 leading-none">Lateral Force</div>
+            <div className="hidden xl:block text-[9px] uppercase tracking-wider text-slate-400 leading-none">Lateral Force</div>
             <div className="text-base font-bold tabular-nums min-w-[48px] leading-tight">
               {telemetry.lateralG}{' '}
               <span className="text-[10px] font-normal text-slate-500">G</span>
@@ -196,7 +201,7 @@ export const Cockpit: React.FC<CockpitProps> = ({ telemetry, onSetPilotMode }) =
           >
             {Math.round(telemetry.tireTemp || 30)}°
           </div>
-          <div className="hidden sm:block min-w-[62px]">
+          <div className="hidden xl:block min-w-[62px]">
             <div className="text-[9px] uppercase tracking-wider text-slate-400 leading-none">Tire Temp</div>
             <div
               className={`text-[9px] font-bold uppercase tracking-wider truncate ${
@@ -214,7 +219,7 @@ export const Cockpit: React.FC<CockpitProps> = ({ telemetry, onSetPilotMode }) =
 
         {/* Blind Spot Detection (BSD) Wing Mirror Indicators */}
         {telemetry.blindSpot && (
-          <div className="flex items-center gap-1 pl-2 border-l border-slate-800 flex-shrink-0" title="Blind Spot Detection (BSD) Radar Monitors">
+          <div className="hidden lg:flex items-center gap-1 pl-2 border-l border-slate-800 flex-shrink-0" title="Blind Spot Detection (BSD) Radar Monitors">
             <div
               className={`px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase border transition-all ${
                 telemetry.blindSpot.leftCritical

@@ -25,7 +25,7 @@ import { EuroNCAPDrawer } from './components/EuroNCAPDrawer';
 import { PlatoonDrawer } from './components/PlatoonDrawer';
 import { EuroNCAPScenarioType } from './core/scenarios/EuroNCAPEngine';
 import { TelemetryBridge } from './core/telemetry/TelemetryBridge';
-import { AlertOctagon } from 'lucide-react';
+import { AlertOctagon, X } from 'lucide-react';
 
 export function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -91,6 +91,16 @@ export function App() {
   const [cameraViewMode, setCameraViewMode] = useState<'FRONT' | 'REAR' | 'BEV'>('FRONT');
   const trackEditorRef = useRef<TrackEditor>(new TrackEditor());
   const draggingWaypointRef = useRef<number>(-1);
+
+  // Auto-dismiss incident banner after 8 seconds if user does not click to open modal
+  useEffect(() => {
+    if (!activeIncident) return;
+    const timer = setTimeout(() => {
+      setActiveIncident(null);
+      BlackBoxRecorder.getInstance().clear();
+    }, 8000);
+    return () => clearTimeout(timer);
+  }, [activeIncident]);
 
   const handleToggleMute = () => {
     const nextMuted = SoundEngine.getInstance().toggleMute();
@@ -478,6 +488,14 @@ export function App() {
     if (engineRef.current) {
       engineRef.current.setTrackPreset(trackId);
       followedVehicleRef.current = null;
+      setIsCameraLocked(true);
+      setActiveIncident(null);
+      BlackBoxRecorder.getInstance().clear();
+      if (rendererRef.current) {
+        const startPos = engineRef.current.track.centerLine[0];
+        rendererRef.current.camera.lockTo(startPos);
+        rendererRef.current.camera.resetZoom();
+      }
     }
   };
 
@@ -493,6 +511,12 @@ export function App() {
       engineRef.current.setTrackPreset(selectedTrackId);
       followedVehicleRef.current = null;
       setIsCameraLocked(true);
+      setActiveIncident(null);
+      BlackBoxRecorder.getInstance().clear();
+      if (rendererRef.current) {
+        const startPos = engineRef.current.track.centerLine[0];
+        rendererRef.current.camera.lockTo(startPos);
+      }
     }
   };
 
@@ -661,7 +685,7 @@ export function App() {
       </header>
 
       {/* Floating Dynamic HUD: Brain Synapses and/or Deep RL Mistake Learning */}
-      <aside className="absolute right-4 top-28 z-20 pointer-events-auto flex flex-col items-end gap-2 max-h-[calc(100vh-170px)] overflow-y-auto no-scrollbar">
+      <aside className="hidden md:flex absolute right-4 top-24 z-20 pointer-events-auto flex-col items-end gap-2 max-h-[calc(100vh-170px)] overflow-y-auto no-scrollbar">
         {/* HUD Switcher Toolbar */}
         <div className="flex items-center gap-1 bg-slate-900/90 border border-slate-800 rounded-lg p-1 backdrop-blur-md shadow-xl text-xs font-medium">
           <button
@@ -718,7 +742,7 @@ export function App() {
       </aside>
 
       {/* Top-Left Live Circuit Radar & Race Analytics HUD */}
-      <aside className="absolute top-28 left-4 z-20 pointer-events-auto flex flex-col items-start gap-2 max-h-[calc(100vh-170px)] overflow-y-auto no-scrollbar">
+      <aside className="hidden md:flex absolute top-24 left-4 z-20 pointer-events-auto flex-col items-start gap-2 max-h-[calc(100vh-170px)] overflow-y-auto no-scrollbar">
         {engineRef.current && (
           <MiniMap
             track={engineRef.current.track}
@@ -760,13 +784,23 @@ export function App() {
 
       {/* Floating Black Box Incident Banner */}
       {activeIncident && !showBlackBoxModal && (
-        <div className="absolute top-[72px] left-1/2 -translate-x-1/2 z-30 pointer-events-auto">
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-30 pointer-events-auto flex items-center bg-red-600/95 hover:bg-red-500 text-white font-mono text-xs font-bold shadow-2xl shadow-red-950/60 border border-red-400 rounded-full px-3 py-1 animate-pulse transition-all">
           <button
             onClick={() => setShowBlackBoxModal(true)}
-            className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-red-600/95 hover:bg-red-500 text-white font-mono text-xs font-bold shadow-2xl shadow-red-950/60 border border-red-400 animate-pulse transition-all"
+            className="flex items-center gap-2 pr-2 border-r border-red-400/50 hover:underline"
           >
             <AlertOctagon className="w-4 h-4 text-white" />
             <span>INCIDENT LOGGED · VIEW BLACK BOX REPLAY</span>
+          </button>
+          <button
+            onClick={() => {
+              setActiveIncident(null);
+              BlackBoxRecorder.getInstance().clear();
+            }}
+            className="p-1 pl-2 text-red-100 hover:text-white"
+            title="Dismiss incident banner"
+          >
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
