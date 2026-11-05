@@ -87,30 +87,28 @@ export class ClassicController {
       brake = Math.min(1.0, Math.abs(accel) / ego.config.brakeDecel);
     }
 
-    // 2. Lateral Control: Pure Pursuit Path Tracking
-    const lookahead = Math.max(
-      this.config.minLookahead,
-      ego.state.speed * this.config.lookaheadRatio
-    );
-    const targetS = frenet.s + lookahead;
-    const targetD = track.getLaneCenterD(this.config.targetLaneIndex);
+    // 2. Lateral Control: Curvature-Compensated Stanley Path Tracking (No Corner-Cutting)
+    const laneStart = track.isBidirectional ? track.oncomingLaneCount : 0;
+    const forwardLanes = Math.max(1, track.laneCount - laneStart);
+    const targetLane = Math.max(laneStart, Math.min(track.laneCount - 1, this.config.targetLaneIndex));
+    const targetD = track.getLaneCenterD(targetLane);
 
-    const goalCartesian = track.frenet.frenetToCartesian(targetS, targetD);
-    const toGoal = goalCartesian.position.sub(ego.state.position);
+    const roadState = track.spline.evaluateAtDistance(frenet.s);
+    const roadHeading = Math.atan2(roadState.tangent.y, roadState.tangent.x);
+    let headingError = ego.state.heading - roadHeading;
+    while (headingError > Math.PI) headingError -= 2 * Math.PI;
+    while (headingError < -Math.PI) headingError += 2 * Math.PI;
 
-    // Angle from car heading to target waypoint
-    const targetAngle = toGoal.angle();
-    let alpha = targetAngle - ego.state.heading;
-    while (alpha > Math.PI) alpha -= 2 * Math.PI;
-    while (alpha < -Math.PI) alpha += 2 * Math.PI;
+    // Curvature feedforward: follows curve without cutting inner chord
+    const curveFeedforward = Math.atan(roadState.curvature * ego.config.wheelbase);
 
-    // Pure Pursuit curvature: 2 * sin(alpha) / Ld
-    const Ld = toGoal.magnitude();
-    const curvature = Ld > 1e-3 ? (2 * Math.sin(alpha)) / Ld : 0;
-    const steerAngle = Math.atan(curvature * ego.config.wheelbase);
+    // Cross-track error (positive = left of center, negative = right of center)
+    const lateralOffset = frenet.d - targetD;
+    const crossTrackSteer = Math.atan((0.95 * lateralOffset) / Math.max(1.5, ego.state.speed * 0.85 + 1.2));
+    const headingCorrection = -0.85 * headingError;
 
-    // Normalize to [-1, 1] relative to vehicle's max steering angle
-    const steer = Math.max(-1.0, Math.min(1.0, steerAngle / ego.config.maxSteerAngle));
+    const totalSteerAngle = curveFeedforward + crossTrackSteer + headingCorrection;
+    const steer = Math.max(-1.0, Math.min(1.0, totalSteerAngle / ego.config.maxSteerAngle));
 
     return { throttle, brake, steer };
   }

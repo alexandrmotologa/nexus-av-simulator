@@ -49,33 +49,35 @@ export class SafetyGovernor {
     const v = vehicle.state;
     const frenet = track.frenet.cartesianToFrenet(v.position, v.heading, v.speed);
 
-    // 1. Precise Kinematic Lane Centering via Pure Pursuit
-    // Looks ahead along the target lane to determine proper road curvature & heading
+    // 1. Precise Curvature-Compensated Stanley Kinematic Lane Centering (Zero Corner-Cutting)
     const currentLane = track.getLaneIndex(frenet.d);
     const targetLane = assignedLaneIndex >= 0 ? assignedLaneIndex : currentLane;
     const targetLaneD = track.getLaneCenterD(targetLane);
 
-    const lookahead = Math.max(8.0, Math.min(32.0, v.speed * 0.9));
-    let targetS = frenet.s + lookahead;
-    if (track.closed && track.spline.totalLength > 0) {
-      if (targetS >= track.spline.totalLength) targetS -= track.spline.totalLength;
-      if (targetS < 0) targetS += track.spline.totalLength;
-    }
+    // Lateral deviation from target lane center (positive = left of center, negative = right of center)
+    const lateralOffset = frenet.d - targetLaneD;
 
-    const targetWaypoint = track.frenet.frenetToCartesian(targetS, targetLaneD);
-    const toWaypoint = targetWaypoint.position.sub(v.position);
+    // Road tangent, normal and curvature evaluated at vehicle distance s
+    const roadState = track.spline.evaluateAtDistance(frenet.s);
+    const roadHeading = Math.atan2(roadState.tangent.y, roadState.tangent.x);
+    let headingError = v.heading - roadHeading;
+    while (headingError > Math.PI) headingError -= 2 * Math.PI;
+    while (headingError < -Math.PI) headingError += 2 * Math.PI;
 
-    // Heading error to waypoint
-    const targetAngle = toWaypoint.angle();
-    let alpha = targetAngle - v.heading;
-    while (alpha > Math.PI) alpha -= 2 * Math.PI;
-    while (alpha < -Math.PI) alpha += 2 * Math.PI;
+    // Curvature feedforward: calculates exact geometric steering needed to follow curve arc with 0 chord error
+    const curveFeedforward = Math.atan(roadState.curvature * vehicle.config.wheelbase);
 
-    // Kinematic Pure Pursuit curvature: 2 * sin(alpha) / Ld
-    const Ld = Math.max(1.0, toWaypoint.magnitude());
-    const curvature = (2.0 * Math.sin(alpha)) / Ld;
-    const laneSteerAngle = Math.atan(curvature * vehicle.config.wheelbase);
-    const laneGuidanceSteer = Math.max(-1.0, Math.min(1.0, laneSteerAngle / vehicle.config.maxSteerAngle));
+    // Stanley cross-track error feedback:
+    // In canvas coordinates (+y down, clockwise heading increases):
+    // If lateralOffset > 0 (vehicle is to the left of center), positive steer turns right towards center.
+    // If lateralOffset < 0 (vehicle is to the right of center), negative steer turns left towards center.
+    const kCrossTrack = 0.95;
+    const kHeading = 0.85;
+    const crossTrackSteer = Math.atan((kCrossTrack * lateralOffset) / Math.max(1.5, v.speed * 0.85 + 1.2));
+    const headingCorrection = -kHeading * headingError;
+
+    const totalGuidanceSteerAngle = curveFeedforward + crossTrackSteer + headingCorrection;
+    const laneGuidanceSteer = Math.max(-1.0, Math.min(1.0, totalGuidanceSteerAngle / vehicle.config.maxSteerAngle));
 
     // 2. 360° LiDAR Repulsive Wall & Obstacle Vector (Vehicle-Local Frame)
     // Vehicle Forward: (cos(heading), sin(heading))
@@ -164,16 +166,43 @@ export class SafetyGovernor {
       }
     }
 
+    const absOffset = Math.abs(lateralOffset);
+
+    // Compute dynamic DC-bias rejection:
+    // If the driver/AI is steering in the same direction as the existing lateral error
+    // (e.g. car is already drifting right, and AI is asking to steer even further right),
+    // progressively filter out the off-center push so the vehicle never settles on a line.
+    let aiSteerDamped = rawControl.steer;
+    const isPushingFurtherOffCenter =
+      (lateralOffset > 0 && rawControl.steer < -0.05) ||
+      (lateralOffset < 0 && rawControl.steer > 0.05);
+
+    if (isPushingFurtherOffCenter) {
+      const pushSeverity = Math.min(1.0, absOffset / 0.40);
+      aiSteerDamped = rawControl.steer * (1.0 - pushSeverity * 0.75);
+    }
+
     if (Math.abs(wallRepulseSteer) > 0.1) {
       // Priority 1: Imminent wall collision avoidance
       finalSteer = wallRepulseSteer * 0.75 + laneGuidanceSteer * 0.25;
       finalThrottle *= 0.5; // Ease throttle when making urgent evasive correction
     } else if (isStraddlingDivider && !v.isBlinkingLeft && !v.isBlinkingRight) {
       // Priority 2: Lane Straddling Correction - firmly pull vehicle into center of target lane
-      finalSteer = laneGuidanceSteer * 0.85 + rawControl.steer * 0.15;
+      finalSteer = laneGuidanceSteer * 0.88 + aiSteerDamped * 0.12;
+    } else if (absOffset <= 0.15) {
+      // Zone 1: Human Comfort Sweet Spot (|offset| <= 15cm)
+      // Car is centered naturally. Soft guidance prevents robotic twitching while preserving human feel.
+      finalSteer = laneGuidanceSteer * 0.55 + aiSteerDamped * 0.45;
+    } else if (absOffset <= 0.45) {
+      // Zone 2: Progressive Centering Corridor (15cm to 45cm)
+      // Smooth Hermite ramp from 55% to 80% centering authority
+      const t = (absOffset - 0.15) / 0.30;
+      const smoothAuthority = 0.55 + (0.80 - 0.55) * (t * t * (3 - 2 * t));
+      finalSteer = laneGuidanceSteer * smoothAuthority + aiSteerDamped * (1.0 - smoothAuthority);
     } else {
-      // Priority 3: Normal lane discipline with AI nuance (65% lane guidance + 35% AI nuance)
-      finalSteer = laneGuidanceSteer * 0.65 + rawControl.steer * 0.35;
+      // Zone 3: Line Buffer Zone (|offset| > 45cm)
+      // Approaching outer boundaries; high authority smoothly realigns vehicle into corridor
+      finalSteer = laneGuidanceSteer * 0.85 + aiSteerDamped * 0.15;
     }
 
     // Double Solid Yellow Centerline Protection (prevent crossing into oncoming traffic flow)
