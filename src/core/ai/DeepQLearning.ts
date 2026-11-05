@@ -7,6 +7,7 @@ import { ControlInput } from '../physics/VehicleState';
 import { Collision } from '../math/Collision';
 import { RoadObstacle } from '../world/Obstacle';
 import { SafetyGovernor } from '../control/SafetyGovernor';
+import { PedestrianManager } from '../traffic/PedestrianManager';
 
 export interface Transition {
   state: Float32Array;
@@ -251,7 +252,13 @@ export class DeepQLearningAgent {
   /**
    * Main step of the Online Learning Loop with anti-cheat checks and barrier physics.
    */
-  public step(dt: number, track: Track, traffic: VehicleModel[], obstacles: RoadObstacle[] = []): void {
+  public step(
+    dt: number,
+    track: Track,
+    traffic: VehicleModel[],
+    obstacles: RoadObstacle[] = [],
+    pedestrianManager?: PedestrianManager
+  ): void {
     const v = this.vehicle;
 
     // 1. 360° Perception
@@ -261,7 +268,7 @@ export class DeepQLearningAgent {
 
     // 2. Evaluate reward and mistake feedback
     if (this.prevState !== null) {
-      const { reward, isMistake, reason, done } = this.calculateReward(track, traffic, obstacles);
+      const { reward, isMistake, reason, done } = this.calculateReward(track, traffic, obstacles, pedestrianManager);
 
       const transition: Transition = {
         state: this.prevState,
@@ -306,17 +313,33 @@ export class DeepQLearningAgent {
     this.smoothedControl.throttle = this.smoothedControl.throttle * (1 - alphaLong) + rawControl.throttle * alphaLong;
     this.smoothedControl.brake = this.smoothedControl.brake * (1 - alphaLong) + rawControl.brake * alphaLong;
 
+    const frenet = track.frenet.cartesianToFrenet(v.state.position, v.state.heading, v.state.speed);
+    const currentPhysicalLane = track.getLaneIndex(frenet.d);
+
+    // Crosswalk compliance: brake to yield before occupied crosswalk
+    if (pedestrianManager) {
+      const upcomingCw = pedestrianManager.getUpcomingCrosswalk(frenet.s, 35.0);
+      if (upcomingCw && upcomingCw.isOccupied) {
+        const stopDist = Math.max(0, upcomingCw.distance - 3.5);
+        if (stopDist < 25.0) {
+          this.smoothedControl.brake = Math.max(this.smoothedControl.brake, Math.min(1.0, 1.0 - stopDist / 25.0));
+          this.smoothedControl.throttle = 0;
+          if (stopDist < 1.0) {
+            this.smoothedControl.brake = 1.0;
+          }
+        }
+      }
+    }
+
     // Controlled Lane Change & Automotive Turn Signal Discipline
     if (this.laneChangeCooldown > 0) {
       this.laneChangeCooldown -= dt;
     }
 
-    const frenet = track.frenet.cartesianToFrenet(v.state.position, v.state.heading, v.state.speed);
-    const currentPhysicalLane = track.getLaneIndex(frenet.d);
-
     // Overtake evaluation: only initiate intentional lane changes when approaching slower traffic
     const radarLead = this.radar.targetDetected ? this.radar.targetDistance : Infinity;
-    const needOvertake = this.laneChangeCooldown <= 0 && (radarLead < 18.0 || this.radar.closingSpeed > 3.0);
+    const isNearCrosswalk = pedestrianManager?.getUpcomingCrosswalk(frenet.s, 45.0) !== null && pedestrianManager?.getUpcomingCrosswalk(frenet.s, 45.0) !== undefined;
+    const needOvertake = !isNearCrosswalk && this.laneChangeCooldown <= 0 && (radarLead < 18.0 || this.radar.closingSpeed > 3.0);
 
     if (needOvertake && this.targetLaneIndex === this.assignedLaneIndex) {
       const laneStart = track.isBidirectional ? track.oncomingLaneCount : 0;
@@ -335,11 +358,8 @@ export class DeepQLearningAgent {
 
     // Turn signals are strictly for active lane changes between different lanes
     if (this.targetLaneIndex !== this.assignedLaneIndex) {
-      const targetD = track.getLaneCenterD(this.targetLaneIndex);
-      const distToTarget = Math.abs(frenet.d - targetD);
-
-      if (currentPhysicalLane === this.targetLaneIndex && distToTarget < 0.45) {
-        // Vehicle has fully settled into new lane
+      if (currentPhysicalLane === this.targetLaneIndex) {
+        // Vehicle has crossed into target lane: auto-cancel turn signals immediately
         this.assignedLaneIndex = this.targetLaneIndex;
         v.state.isBlinkingLeft = false;
         v.state.isBlinkingRight = false;
@@ -356,6 +376,14 @@ export class DeepQLearningAgent {
     } else {
       // Cruising inside assigned lane: turn signals are completely OFF (never blink for centering, bends, or roundabouts)
       v.state.isBlinkingLeft = false;
+      v.state.isBlinkingRight = false;
+    }
+
+    // Boundary clamp: leftmost lane never signals left, rightmost never signals right
+    if (currentPhysicalLane === 0) {
+      v.state.isBlinkingLeft = false;
+    }
+    if (currentPhysicalLane === track.laneCount - 1) {
       v.state.isBlinkingRight = false;
     }
 
@@ -398,7 +426,8 @@ export class DeepQLearningAgent {
   private calculateReward(
     track: Track,
     traffic: VehicleModel[],
-    obstacles: RoadObstacle[] = []
+    obstacles: RoadObstacle[] = [],
+    pedestrianManager?: PedestrianManager
   ): { reward: number; isMistake: boolean; reason: string; done: boolean } {
     const v = this.vehicle.state;
     const frenet = track.frenet.cartesianToFrenet(v.position, v.heading, v.speed);
@@ -462,6 +491,18 @@ export class DeepQLearningAgent {
     }
 
     // 3. Stalling / Traffic Obstruction Watchdog (allows ~3.0s recovery on starts or hairpins)
+    // Lawful crosswalk yielding is protected: cars waiting for crossing pedestrians are rewarded compliance points
+    const isLawfullyYielding = pedestrianManager?.isLawfullyYieldingAtCrosswalk(frenet.s, v.speed) ?? false;
+    if (isLawfullyYielding) {
+      this.idleSteps = 0;
+      return {
+        reward: 0.45,
+        isMistake: false,
+        reason: 'Lawful Crosswalk Yielding',
+        done: false,
+      };
+    }
+
     if (v.speed < 1.0) {
       this.idleSteps++;
       if (this.idleSteps > 180) {

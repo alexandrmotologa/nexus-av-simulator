@@ -121,6 +121,14 @@ export class ClassicController {
       ego.state.isBlinkingRight = false;
     }
 
+    // Physical boundary clamp: leftmost lane never signals left, rightmost never signals right
+    if (currentPhysicalLane === 0) {
+      ego.state.isBlinkingLeft = false;
+    }
+    if (currentPhysicalLane === track.laneCount - 1) {
+      ego.state.isBlinkingRight = false;
+    }
+
     const totalSteerAngle = curveFeedforward + crossTrackSteer + headingCorrection;
     const steer = Math.max(-1.0, Math.min(1.0, totalSteerAngle / ego.config.maxSteerAngle));
 

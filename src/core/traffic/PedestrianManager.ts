@@ -77,6 +77,75 @@ export class PedestrianManager {
   }
 
   /**
+   * Checks whether a given crosswalk is currently occupied by pedestrians on the road
+   * or waiting at the curb with intention to cross.
+   */
+  public isCrosswalkOccupied(cw: Crosswalk): boolean {
+    const halfRoadWidth = this.track.totalWidth * 0.5;
+    for (const vru of this.vrus) {
+      if (vru.type !== 'PEDESTRIAN') continue;
+      // Longitudinal proximity to the crosswalk
+      let deltaS = Math.abs(vru.s - cw.s);
+      if (this.track.closed) {
+        if (deltaS > this.track.spline.totalLength * 0.5) {
+          deltaS = this.track.spline.totalLength - deltaS;
+        }
+      }
+      if (deltaS > 4.5) continue;
+
+      // Pedestrian is crossing or on the roadway / curb margin
+      const isOnRoadOrCurb = Math.abs(vru.d) <= halfRoadWidth + 0.6;
+      if (isOnRoadOrCurb && (vru.state === 'CROSSING' || vru.state === 'WAITING')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Finds the nearest upcoming crosswalk within lookahead distance and reports its occupancy status.
+   */
+  public getUpcomingCrosswalk(
+    frenetS: number,
+    lookahead: number = 45.0
+  ): { crosswalk: Crosswalk; distance: number; isOccupied: boolean } | null {
+    const totalLength = this.track.spline.totalLength;
+    let closestCw: Crosswalk | null = null;
+    let minDistance = Infinity;
+
+    for (const cw of this.crosswalks) {
+      let deltaS = cw.s - frenetS;
+      if (this.track.closed) {
+        if (deltaS < -totalLength * 0.5) deltaS += totalLength;
+        if (deltaS > totalLength * 0.5) deltaS -= totalLength;
+      }
+
+      if (deltaS > 0 && deltaS <= lookahead && deltaS < minDistance) {
+        minDistance = deltaS;
+        closestCw = cw;
+      }
+    }
+
+    if (closestCw) {
+      return {
+        crosswalk: closestCw,
+        distance: minDistance,
+        isOccupied: this.isCrosswalkOccupied(closestCw),
+      };
+    }
+    return null;
+  }
+
+  /**
+   * Evaluates if a vehicle is lawfully stopped or crawling before an occupied crosswalk.
+   */
+  public isLawfullyYieldingAtCrosswalk(frenetS: number, speedMps: number): boolean {
+    if (speedMps > 3.0) return false;
+    const upcoming = this.getUpcomingCrosswalk(frenetS, 14.0);
+    return upcoming !== null && upcoming.isOccupied;
+  }
+
+  /**
    * Evaluates forward collision risk with vulnerable road users for VRU-AEB
    */
   public checkVRUCollisionRisk(

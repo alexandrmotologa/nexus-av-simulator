@@ -21,6 +21,8 @@ export class PedestrianModel {
   public crossingDirection: 1 | -1 = 1; // 1 = right to left, -1 = left to right
   public walkPhase: number = 0;
   public isDamaged: boolean = false;
+  public pauseTimer: number = 0;
+  public damagedTimer: number = 0;
 
   constructor(
     id: string,
@@ -45,53 +47,87 @@ export class PedestrianModel {
   }
 
   public update(dt: number, track: Track, vehicles: VehicleModel[]): void {
-    if (this.isDamaged) return;
+    const halfRoadWidth = track.totalWidth * 0.5;
+
+    // 0. Impact recovery: never freeze permanently on the road
+    if (this.isDamaged) {
+      this.damagedTimer += dt;
+      if (this.damagedTimer > 2.0) {
+        // Recover and safely reposition onto the nearest sidewalk curb
+        this.isDamaged = false;
+        this.damagedTimer = 0;
+        this.d = this.d >= 0 ? halfRoadWidth + 1.2 : -halfRoadWidth - 1.2;
+        this.state = 'WAITING';
+        this.pauseTimer = 0;
+      } else {
+        return;
+      }
+    }
 
     this.walkPhase += dt * (this.speed * 4.0);
 
     if (this.type === 'PEDESTRIAN') {
-      const halfRoadWidth = track.totalWidth * 0.5;
-
-      // 1. Waiting at kerb: inspect approaching vehicles
+      // 1. Waiting at kerb: inspect approaching vehicles in both travel directions
       if (this.state === 'WAITING') {
+        this.pauseTimer += dt;
         let isVehicleTooClose = false;
 
-        for (const v of vehicles) {
-          const vFrenet = track.frenet.cartesianToFrenet(v.state.position, v.state.heading, v.state.speed);
-          let distS = this.s - vFrenet.s;
-          if (track.closed) {
-            if (distS < -track.spline.totalLength * 0.5) distS += track.spline.totalLength;
-            if (distS > track.spline.totalLength * 0.5) distS -= track.spline.totalLength;
+        if (this.pauseTimer > 1.2) {
+          for (const v of vehicles) {
+            const vFrenet = track.frenet.cartesianToFrenet(v.state.position, v.state.heading, v.state.speed);
+            let distS = this.s - vFrenet.s;
+            if (track.closed) {
+              if (distS < -track.spline.totalLength * 0.5) distS += track.spline.totalLength;
+              if (distS > track.spline.totalLength * 0.5) distS -= track.spline.totalLength;
+            }
+
+            // Approaching vehicle moving fast within 28 meters
+            if (distS > -1.5 && distS < 28.0 && v.state.speed > 2.5) {
+              isVehicleTooClose = true;
+              break;
+            }
           }
 
-          // Approaching fast within 25 meters
-          if (distS > -2.0 && distS < 25.0 && v.state.speed > 3.0) {
-            isVehicleTooClose = true;
+          if (!isVehicleTooClose) {
+            this.state = 'CROSSING';
+            this.pauseTimer = 0;
+          }
+        }
+      }
+
+      // 2. Crossing the road: steadily advance across zebra stripes until reaching the sidewalk
+      if (this.state === 'CROSSING') {
+        let walkSpeed = this.baseSpeed;
+
+        // If a vehicle is within 5 meters, quicken pace (~1.8 m/s) to clear the road promptly
+        for (const v of vehicles) {
+          if (this.position.distance(v.state.position) < 5.0) {
+            walkSpeed = Math.max(walkSpeed, 1.8);
             break;
           }
         }
 
-        if (!isVehicleTooClose) {
-          this.state = 'CROSSING';
-        }
-      }
-
-      // 2. Crossing the road across Frenet lateral offset d
-      if (this.state === 'CROSSING') {
-        const stepD = this.speed * dt * this.crossingDirection;
+        const stepD = walkSpeed * dt * this.crossingDirection;
         this.d += stepD;
 
         if (
           (this.crossingDirection === 1 && this.d >= this.targetD) ||
           (this.crossingDirection === -1 && this.d <= this.targetD)
         ) {
-          // Reached opposite shoulder, turnaround after pause
+          // Reached opposite sidewalk: transition to COMPLETED
           this.state = 'COMPLETED';
-          setTimeout(() => {
-            this.crossingDirection = this.crossingDirection === 1 ? -1 : 1;
-            this.targetD = this.crossingDirection === 1 ? halfRoadWidth + 1.2 : -halfRoadWidth - 1.2;
-            this.state = 'WAITING';
-          }, 3500);
+          this.pauseTimer = 0;
+        }
+      }
+
+      // 3. Completed crossing: wait safely on the sidewalk before turning around
+      if (this.state === 'COMPLETED') {
+        this.pauseTimer += dt;
+        if (this.pauseTimer >= 4.5) {
+          this.crossingDirection = this.crossingDirection === 1 ? -1 : 1;
+          this.targetD = this.crossingDirection === 1 ? halfRoadWidth + 1.2 : -halfRoadWidth - 1.2;
+          this.state = 'WAITING';
+          this.pauseTimer = 0;
         }
       }
 
@@ -112,11 +148,11 @@ export class PedestrianModel {
       this.heading = cart.heading;
     }
 
-    // Physical collision check with vehicles
+    // Physical collision check: only register damage on actual high-speed vehicle impact
     for (const v of vehicles) {
-      if (this.position.distance(v.state.position) < this.radius + 1.2) {
+      if (v.state.speed > 3.0 && this.position.distance(v.state.position) < this.radius + 0.9) {
         this.isDamaged = true;
-        this.speed = 0;
+        this.damagedTimer = 0;
       }
     }
   }

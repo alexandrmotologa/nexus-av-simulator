@@ -8,6 +8,7 @@ import { ControlInput } from '../physics/VehicleState';
 import { Collision } from '../math/Collision';
 import { RoadObstacle } from '../world/Obstacle';
 import { SafetyGovernor } from '../control/SafetyGovernor';
+import { PedestrianManager } from '../traffic/PedestrianManager';
 
 export interface AgentFitnessStats {
   distance: number;
@@ -250,7 +251,12 @@ export class GeneticEngine {
   /**
    * Updates all agents, executes 360° perception, enforces barrier physics, anti-reverse checks, and updates fitness.
    */
-  public update(dt: number, trafficVehicles: VehicleModel[], obstacles: RoadObstacle[] = []): void {
+  public update(
+    dt: number,
+    trafficVehicles: VehicleModel[],
+    obstacles: RoadObstacle[] = [],
+    pedestrianManager?: PedestrianManager
+  ): void {
     let aliveCount = 0;
 
     for (const agent of this.population) {
@@ -347,6 +353,21 @@ export class GeneticEngine {
       throttle = agent.lastThrottle * 0.70 + rawThrottle * 0.30;
       agent.lastThrottle = throttle;
 
+      // 3a. Crosswalk Yielding: Brake to a halt before occupied crosswalk stop line
+      if (pedestrianManager) {
+        const upcomingCw = pedestrianManager.getUpcomingCrosswalk(frenet.s, 35.0);
+        if (upcomingCw && upcomingCw.isOccupied) {
+          const stopDist = Math.max(0, upcomingCw.distance - 3.5);
+          if (stopDist < 25.0) {
+            brake = Math.max(brake, Math.min(1.0, 1.0 - stopDist / 25.0));
+            throttle = 0;
+            if (stopDist < 1.0) {
+              brake = 1.0;
+            }
+          }
+        }
+      }
+
       // 3b. Evaluate Safe Lane Change (Traffic Rules & Non-Chaotic Signaling)
       if (agent.laneChangeCooldown > 0) {
         agent.laneChangeCooldown -= dt;
@@ -354,7 +375,8 @@ export class GeneticEngine {
 
       const currentPhysicalLane = this.track.getLaneIndex(frenet.d);
       const radarLead = agent.radar.targetDetected ? agent.radar.targetDistance : Infinity;
-      const needOvertake = agent.laneChangeCooldown <= 0 && (radarLead < 18.0 || agent.radar.closingSpeed > 3.0);
+      const isNearCrosswalk = pedestrianManager?.getUpcomingCrosswalk(frenet.s, 45.0) !== null && pedestrianManager?.getUpcomingCrosswalk(frenet.s, 45.0) !== undefined;
+      const needOvertake = !isNearCrosswalk && agent.laneChangeCooldown <= 0 && (radarLead < 18.0 || agent.radar.closingSpeed > 3.0);
 
       if (needOvertake && agent.targetLane === agent.assignedLane) {
         const laneStart = this.track.isBidirectional ? this.track.oncomingLaneCount : 0;
@@ -373,11 +395,8 @@ export class GeneticEngine {
 
       // Turn signals are strictly for active lane changes between different lanes
       if (agent.targetLane !== agent.assignedLane) {
-        const targetD = this.track.getLaneCenterD(agent.targetLane);
-        const distToTarget = Math.abs(frenet.d - targetD);
-
-        if (currentPhysicalLane === agent.targetLane && distToTarget < 0.45) {
-          // Successfully established inside target lane
+        // Auto-cancel blinker as soon as car establishes itself in destination lane
+        if (currentPhysicalLane === agent.targetLane) {
           agent.assignedLane = agent.targetLane;
           v.state.isBlinkingLeft = false;
           v.state.isBlinkingRight = false;
@@ -394,6 +413,14 @@ export class GeneticEngine {
       } else {
         // Cruising inside assigned lane: turn signals are completely OFF (never blink for centering, bends, or roundabouts)
         v.state.isBlinkingLeft = false;
+        v.state.isBlinkingRight = false;
+      }
+
+      // Physical boundary clamp: leftmost lane never blinks left, rightmost never blinks right
+      if (currentPhysicalLane === 0) {
+        v.state.isBlinkingLeft = false;
+      }
+      if (currentPhysicalLane === this.track.laneCount - 1) {
         v.state.isBlinkingRight = false;
       }
 
@@ -478,8 +505,14 @@ export class GeneticEngine {
       }
 
       // Anti-stalling / Wall-Scraping Watchdog: eliminate cars that linger or crawl under 2.5 m/s (~9 km/h)
+      // Lawful crosswalk yielding is protected: cars waiting for crossing pedestrians are awarded compliance fitness
       if (agent.isAlive) {
-        if (v.state.speed < 2.5) {
+        const isLawfullyYielding = pedestrianManager?.isLawfullyYieldingAtCrosswalk(frenet.s, v.state.speed) ?? false;
+
+        if (isLawfullyYielding) {
+          agent.stalledFrames = 0;
+          agent.fitness += 0.25; // Compliance reward for obeying zebra crossing
+        } else if (v.state.speed < 2.5) {
           agent.stalledFrames++;
           if (agent.stalledFrames > 120) {
             v.state.isDamaged = true;

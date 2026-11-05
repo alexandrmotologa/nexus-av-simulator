@@ -5,6 +5,7 @@ import { IntelligentDriverModel, IDMParameters } from './IDM';
 import { MOBILLaneChanger } from './MOBIL';
 import { RoadObstacle } from '../world/Obstacle';
 import { Collision } from '../math/Collision';
+import { PedestrianManager } from './PedestrianManager';
 
 export interface TrafficVehicleAgent {
   vehicle: VehicleModel;
@@ -114,7 +115,12 @@ export class TrafficManager {
   /**
    * Updates all NPC traffic over timestep dt using IDM, verified lane-changing, and physical collision resolution.
    */
-  public update(dt: number, egoVehicle?: VehicleModel, obstacles: RoadObstacle[] = []): void {
+  public update(
+    dt: number,
+    egoVehicle?: VehicleModel,
+    obstacles: RoadObstacle[] = [],
+    pedestrianManager?: PedestrianManager
+  ): void {
     const allVehicles = [...this.agents.map((a) => a.vehicle)];
     if (egoVehicle) allVehicles.push(egoVehicle);
 
@@ -168,7 +174,20 @@ export class TrafficManager {
         }
       }
 
+      // 1b. Pedestrian Crosswalk Yielding (Vienna Convention): All NPC vehicles stop at stop line when occupied
+      if (pedestrianManager) {
+        const upcomingCw = pedestrianManager.getUpcomingCrosswalk(frenet.s, 42.0);
+        if (upcomingCw && upcomingCw.isOccupied) {
+          const stopLineDist = Math.max(0.2, upcomingCw.distance - 3.5);
+          if (stopLineDist < leaderDist) {
+            leaderDist = stopLineDist;
+            leaderSpeed = 0; // Solid stop line before crosswalk acts as virtual stationary stop
+          }
+        }
+      }
+
       // 2. Safe Lane Following & Active Obstacle Overtaking
+      const currentPhysicalLane = this.track.getLaneIndex(frenet.d);
       let targetD = this.track.getLaneCenterD(agent.currentLaneIndex);
 
       if (agent.isChangingLane) {
@@ -177,18 +196,28 @@ export class TrafficManager {
         const toD = this.track.getLaneCenterD(agent.targetLaneIndex);
         targetD = fromD + (toD - fromD) * Math.min(1, agent.laneChangeProgress);
 
-        if (agent.laneChangeProgress >= 1.0) {
+        // Turn signal auto-cancel: once vehicle has crossed into target lane or completed progress
+        if (currentPhysicalLane === agent.targetLaneIndex || agent.laneChangeProgress >= 1.0) {
           agent.currentLaneIndex = agent.targetLaneIndex;
           agent.isChangingLane = false;
+          agent.laneChangeProgress = 1.0;
           agent.vehicle.state.isBlinkingLeft = false;
           agent.vehicle.state.isBlinkingRight = false;
         }
       } else {
+        // Synchronize current lane index to actual physical lane to eliminate phantom drift offsets
+        agent.currentLaneIndex = currentPhysicalLane;
+        agent.targetLaneIndex = currentPhysicalLane;
+        agent.vehicle.state.isBlinkingLeft = false;
+        agent.vehicle.state.isBlinkingRight = false;
+
         const isObstacleAhead = leaderDist < 35.0 && (leaderIsDamaged || leaderSpeed < 3.0);
         const isSlowMoving = leaderDist < 25.0 && leaderSpeed < agent.idm.params.desiredSpeed * 0.75;
+        // Traffic rules: strictly forbid overtaking when approaching a crosswalk
+        const isNearCrosswalk = pedestrianManager?.getUpcomingCrosswalk(frenet.s, 45.0) !== null && pedestrianManager?.getUpcomingCrosswalk(frenet.s, 45.0) !== undefined;
 
         // If stopped/damaged obstacle ahead, evaluate EVERY frame! If slow moving, evaluate periodically.
-        const shouldCheckOvertake = isObstacleAhead || (isSlowMoving && Math.random() < 0.08);
+        const shouldCheckOvertake = !isNearCrosswalk && (isObstacleAhead || (isSlowMoving && Math.random() < 0.08));
 
         if (shouldCheckOvertake) {
           const candidateLanes: number[] = [];
@@ -264,6 +293,14 @@ export class TrafficManager {
             }
           }
         }
+      }
+
+      // Physical boundary clamp: leftmost lane never signals left, rightmost lane never signals right
+      if (currentPhysicalLane === 0) {
+        agent.vehicle.state.isBlinkingLeft = false;
+      }
+      if (currentPhysicalLane === this.track.laneCount - 1) {
+        agent.vehicle.state.isBlinkingRight = false;
       }
 
       // 3. IDM longitudinal acceleration

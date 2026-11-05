@@ -171,6 +171,7 @@ export class SimulationEngine {
     this.humanLidar = new LidarSensor();
     this.intersectionManager = new IntersectionManager(this.track);
     this.pedestrianManager = new PedestrianManager(this.track);
+    this.track.configureSignage(this.pedestrianManager.crosswalks, this.intersectionManager.lights);
     this.virtualCamera = new VirtualCamera(160, 80);
     this.visionProcessor = new VisionProcessor(160, 80);
     this.continuousActorCritic = new ContinuousActorCritic(14, 48);
@@ -184,6 +185,7 @@ export class SimulationEngine {
     this.track = preset.createTrack();
     this.intersectionManager.setTrack(this.track);
     this.pedestrianManager.setTrack(this.track);
+    this.track.configureSignage(this.pedestrianManager.crosswalks, this.intersectionManager.lights);
     this.trafficManager.setTrack(this.track);
     this.trafficManager.spawnFleet(this.trafficCount);
     this.geneticEngine.setTrack(this.track);
@@ -203,6 +205,7 @@ export class SimulationEngine {
     this.track = track;
     this.intersectionManager.setTrack(track);
     this.pedestrianManager.setTrack(this.track);
+    this.track.configureSignage(this.pedestrianManager.crosswalks, this.intersectionManager.lights);
     this.trafficManager.setTrack(this.track);
     this.trafficManager.spawnFleet(this.trafficCount);
     this.geneticEngine.setTrack(this.track);
@@ -420,11 +423,27 @@ export class SimulationEngine {
     // 2. Update Vulnerable Road Users (Pedestrians & Cyclists)
     this.pedestrianManager.update(dt, trafficVehicles);
 
-    // 3. Update Traffic NPCs with knowledge of active ego car & obstacles
+    // 3. Update Traffic NPCs with knowledge of active ego car, obstacles & pedestrian crossings
     const activeEgo = this.getActiveEgoVehicle();
-    this.trafficManager.update(dt, activeEgo, obstacles);
+    this.trafficManager.update(dt, activeEgo, obstacles, this.pedestrianManager);
 
-    // VRU-AEB Active Safety: Gentle emergency stop if pedestrian or cyclist in forward corridor
+    // VRU-AEB Active Safety: Stop smoothly before occupied crosswalk stop line
+    const egoFrenet = this.track.frenet.cartesianToFrenet(activeEgo.state.position, activeEgo.state.heading, activeEgo.state.speed);
+    const upcomingCw = this.pedestrianManager.getUpcomingCrosswalk(egoFrenet.s, 35.0);
+    if (upcomingCw && upcomingCw.isOccupied) {
+      const stopLineDist = upcomingCw.distance - 3.5;
+      if (stopLineDist > 0 && stopLineDist < 25.0) {
+        const targetSpeed = Math.max(0, (stopLineDist / 20.0) * 6.0);
+        if (activeEgo.state.speed > targetSpeed) {
+          activeEgo.state.speed = Math.max(targetSpeed, activeEgo.state.speed - 6.0 * dt);
+          activeEgo.state.isBraking = true;
+        }
+      } else if (stopLineDist <= 0.8 && stopLineDist >= -4.0) {
+        activeEgo.state.speed = 0;
+        activeEgo.state.isBraking = true;
+      }
+    }
+
     const vruRisk = this.pedestrianManager.checkVRUCollisionRisk(
       activeEgo.state.position,
       activeEgo.state.heading,
@@ -437,7 +456,7 @@ export class SimulationEngine {
 
     // 2. Update Active Mode
     if (this.pilotMode === 'NEUROEVOLUTION') {
-      this.geneticEngine.update(dt, trafficVehicles, obstacles);
+      this.geneticEngine.update(dt, trafficVehicles, obstacles, this.pedestrianManager);
 
       // Record fitness history when new generation starts
       if (this.geneticEngine.generation > this.lastRecordedGen) {
@@ -452,7 +471,7 @@ export class SimulationEngine {
         if (this.fitnessHistory.length > 50) this.fitnessHistory.shift();
       }
     } else if (this.pilotMode === 'DEEP_RL_AGENT') {
-      this.rlAgent.step(dt, this.track, trafficVehicles, obstacles);
+      this.rlAgent.step(dt, this.track, trafficVehicles, obstacles, this.pedestrianManager);
     } else if (this.pilotMode === 'CLASSIC_ROBOTICS') {
       this.classicRadar.update(this.classicVehicle, this.track, trafficVehicles);
       this.classicLidar.update(this.classicVehicle, this.track, trafficVehicles, obstacles);

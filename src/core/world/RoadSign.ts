@@ -13,7 +13,10 @@ export type RoadSignType =
   | 'SHARP_CURVE_LEFT'
   | 'SHARP_CURVE_RIGHT'
   | 'NO_OVERTAKING'
-  | 'PEDESTRIAN_CROSSING';
+  | 'PEDESTRIAN_CROSSING'
+  | 'PEDESTRIAN_WARNING'
+  | 'TRAFFIC_LIGHT_WARNING'
+  | 'CROSSWALK_SIGN';
 
 export interface RoadSign {
   id: string;

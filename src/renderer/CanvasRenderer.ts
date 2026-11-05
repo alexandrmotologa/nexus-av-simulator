@@ -555,8 +555,71 @@ export class CanvasRenderer {
         this.ctx.textAlign = 'center';
         this.ctx.textBaseline = 'middle';
         this.ctx.fillText(`${sign.speedValue}`, 0, 0.08);
-      } else if (sign.type === 'PEDESTRIAN_CROSSING') {
-        // Triangular danger sign with pedestrian pictogram
+      } else if (sign.type === 'CROSSWALK_SIGN') {
+        // Vienna Convention Sign E, 12a: Square blue informative sign with white triangle & pedestrian
+        this.ctx.fillStyle = '#1d4ed8'; // European Highway Cobalt Blue
+        this.ctx.beginPath();
+        if (typeof this.ctx.roundRect === 'function') {
+          this.ctx.roundRect(-1.3, -1.3, 2.6, 2.6, 0.25);
+        } else {
+          this.ctx.rect(-1.3, -1.3, 2.6, 2.6);
+        }
+        this.ctx.fill();
+        this.ctx.strokeStyle = '#ffffff';
+        this.ctx.lineWidth = 0.08;
+        this.ctx.stroke();
+
+        // White inner triangle
+        this.ctx.fillStyle = '#f8fafc';
+        this.ctx.beginPath();
+        this.ctx.moveTo(0, -1.05);
+        this.ctx.lineTo(1.0, 0.95);
+        this.ctx.lineTo(-1.0, 0.95);
+        this.ctx.closePath();
+        this.ctx.fill();
+
+        // Black pedestrian silhouette
+        this.ctx.fillStyle = '#0f172a';
+        this.ctx.font = 'bold 0.95px sans-serif';
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'middle';
+        this.ctx.fillText('🚶', 0, 0.12);
+      } else if (sign.type === 'TRAFFIC_LIGHT_WARNING') {
+        // Vienna Convention Sign A, 16: Triangular warning sign with 3 vertical signal lights
+        this.ctx.fillStyle = '#dc2626';
+        this.ctx.beginPath();
+        this.ctx.moveTo(0, -1.5);
+        this.ctx.lineTo(1.4, 1.1);
+        this.ctx.lineTo(-1.4, 1.1);
+        this.ctx.closePath();
+        this.ctx.fill();
+
+        this.ctx.fillStyle = '#fef08a';
+        this.ctx.beginPath();
+        this.ctx.moveTo(0, -1.1);
+        this.ctx.lineTo(1.05, 0.85);
+        this.ctx.lineTo(-1.05, 0.85);
+        this.ctx.closePath();
+        this.ctx.fill();
+
+        // 3 vertical signal lenses (Red, Amber, Green)
+        const dotR = 0.22;
+        this.ctx.fillStyle = '#ef4444'; // Red
+        this.ctx.beginPath();
+        this.ctx.arc(0, -0.42, dotR, 0, Math.PI * 2);
+        this.ctx.fill();
+
+        this.ctx.fillStyle = '#f59e0b'; // Amber
+        this.ctx.beginPath();
+        this.ctx.arc(0, 0.05, dotR, 0, Math.PI * 2);
+        this.ctx.fill();
+
+        this.ctx.fillStyle = '#10b981'; // Green
+        this.ctx.beginPath();
+        this.ctx.arc(0, 0.52, dotR, 0, Math.PI * 2);
+        this.ctx.fill();
+      } else if (sign.type === 'PEDESTRIAN_CROSSING' || sign.type === 'PEDESTRIAN_WARNING') {
+        // Vienna Convention Sign A, 12: Triangular danger sign with pedestrian pictogram
         this.ctx.fillStyle = '#dc2626';
         this.ctx.beginPath();
         this.ctx.moveTo(0, -1.5);
@@ -735,8 +798,49 @@ export class CanvasRenderer {
       const numBars = Math.floor(track.totalWidth / spacing);
 
       this.ctx.save();
-      this.ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
 
+      // 1. Vienna Convention Transverse Solid White Stop Line (Stop Bar M, 1: 3.5m ahead of zebra)
+      const stopLineAdvance = barLen * 0.5 + 2.5;
+      let forwardStopS = cw.s - stopLineAdvance;
+      if (track.closed && forwardStopS < 0) forwardStopS += track.spline.totalLength;
+
+      const stopLineSteps = Math.ceil(track.totalWidth / 0.8);
+      this.ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+
+      // Forward direction stop bar
+      for (let sIdx = 0; sIdx <= stopLineSteps; sIdx++) {
+        const d = -halfW + (sIdx / stopLineSteps) * track.totalWidth;
+        // In bidirectional, forward stop bar covers forward lanes only
+        if (track.isBidirectional && track.isOncomingLane(track.getLaneIndex(d))) continue;
+
+        const cart = track.frenet.frenetToCartesian(forwardStopS, d);
+        this.ctx.save();
+        this.ctx.translate(cart.position.x, cart.position.y);
+        this.ctx.rotate(cart.heading);
+        this.ctx.fillRect(-0.25, -0.45, 0.5, 0.9);
+        this.ctx.restore();
+      }
+
+      // Oncoming direction stop bar (for bidirectional roads)
+      if (track.isBidirectional) {
+        let oncomingStopS = cw.s + stopLineAdvance;
+        if (track.closed && oncomingStopS >= track.spline.totalLength) oncomingStopS -= track.spline.totalLength;
+
+        for (let sIdx = 0; sIdx <= stopLineSteps; sIdx++) {
+          const d = -halfW + (sIdx / stopLineSteps) * track.totalWidth;
+          if (!track.isOncomingLane(track.getLaneIndex(d))) continue;
+
+          const cart = track.frenet.frenetToCartesian(oncomingStopS, d);
+          this.ctx.save();
+          this.ctx.translate(cart.position.x, cart.position.y);
+          this.ctx.rotate(cart.heading);
+          this.ctx.fillRect(-0.25, -0.45, 0.5, 0.9);
+          this.ctx.restore();
+        }
+      }
+
+      // 2. High-contrast reflective Zebra Crossing Bars
+      this.ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
       for (let i = 0; i < numBars; i++) {
         const d = -halfW + 0.6 + i * spacing;
         const cart = track.frenet.frenetToCartesian(cw.s, d);

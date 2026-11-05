@@ -2,6 +2,7 @@ import { Vector2D } from '../math/Vector2D';
 import { CatmullRomSpline } from '../math/Spline';
 import { FrenetConverter } from '../math/Frenet';
 import { RoadSign, RoadSignType } from './RoadSign';
+import { Crosswalk } from './Crosswalk';
 
 export type LaneDividerType = 'DASHED_WHITE' | 'SOLID_WHITE' | 'DOUBLE_SOLID_YELLOW' | 'WARNING_DASHED_WHITE';
 
@@ -240,6 +241,108 @@ export class Track {
         lastSignS = s;
       }
     }
+  }
+
+  /**
+   * Configures standardized international road signage (Vienna Convention on Road Signs and Signals):
+   * 1. 60m before each crosswalk: Advance pedestrian warning sign (Sign A, 12) + 50 km/h speed limit.
+   * 2. Directly at crosswalk: Blue square pedestrian crossing sign (Sign E, 12a) on roadside verge.
+   * 3. 75m before each traffic light: Signal warning sign (Sign A, 16) + 50 km/h speed limit.
+   * 4. Forbids high-speed signs (80, 90, 120 km/h) within 90m of crosswalks or traffic lights.
+   */
+  public configureSignage(crosswalks: Crosswalk[] = [], trafficLights: { s: number }[] = []): void {
+    const roadsideD = -(this.totalWidth * 0.5 + 2.2);
+    const length = this.spline.totalLength;
+
+    // Filter out existing signs placed dangerously close to crosswalks or signals
+    this.signs = this.signs.filter((sign) => {
+      for (const cw of crosswalks) {
+        let delta = Math.abs(sign.s - cw.s);
+        if (this.closed && delta > length * 0.5) delta = length - delta;
+        if (delta < 85.0 && sign.speedValue && sign.speedValue > 50) {
+          return false; // Eliminate 80, 90, 120 km/h signs right next to pedestrian crossings!
+        }
+      }
+      for (const tl of trafficLights) {
+        let delta = Math.abs(sign.s - tl.s);
+        if (this.closed && delta > length * 0.5) delta = length - delta;
+        if (delta < 85.0 && sign.speedValue && sign.speedValue > 50) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    // 1. Advance crosswalk warning & speed drop
+    for (let i = 0; i < crosswalks.length; i++) {
+      const cw = crosswalks[i];
+      let warnS = cw.s - 60.0;
+      if (this.closed && warnS < 0) warnS += length;
+      const warnPos = this.frenet.frenetToCartesian(warnS, roadsideD);
+
+      this.signs.push({
+        id: `sign-vienna-ped-warn-${i}`,
+        type: 'PEDESTRIAN_WARNING',
+        s: warnS,
+        position: warnPos.position,
+        heading: warnPos.heading,
+      });
+
+      let speedS = cw.s - 50.0;
+      if (this.closed && speedS < 0) speedS += length;
+      const speedPos = this.frenet.frenetToCartesian(speedS, roadsideD);
+
+      this.signs.push({
+        id: `sign-vienna-ped-speed-${i}`,
+        type: 'SPEED_LIMIT_50',
+        s: speedS,
+        position: speedPos.position,
+        heading: speedPos.heading,
+        speedValue: 50,
+      });
+
+      // Blue square sign directly at the crosswalk
+      const signPos = this.frenet.frenetToCartesian(cw.s, roadsideD);
+      this.signs.push({
+        id: `sign-vienna-crosswalk-${i}`,
+        type: 'CROSSWALK_SIGN',
+        s: cw.s,
+        position: signPos.position,
+        heading: signPos.heading,
+      });
+    }
+
+    // 2. Advance traffic light warning & speed drop
+    for (let i = 0; i < trafficLights.length; i++) {
+      const tl = trafficLights[i];
+      let warnS = tl.s - 75.0;
+      if (this.closed && warnS < 0) warnS += length;
+      const warnPos = this.frenet.frenetToCartesian(warnS, roadsideD);
+
+      this.signs.push({
+        id: `sign-vienna-tl-warn-${i}`,
+        type: 'TRAFFIC_LIGHT_WARNING',
+        s: warnS,
+        position: warnPos.position,
+        heading: warnPos.heading,
+      });
+
+      let speedS = tl.s - 60.0;
+      if (this.closed && speedS < 0) speedS += length;
+      const speedPos = this.frenet.frenetToCartesian(speedS, roadsideD);
+
+      this.signs.push({
+        id: `sign-vienna-tl-speed-${i}`,
+        type: 'SPEED_LIMIT_50',
+        s: speedS,
+        position: speedPos.position,
+        heading: speedPos.heading,
+        speedValue: 50,
+      });
+    }
+
+    // Sort signs by track distance s
+    this.signs.sort((a, b) => a.s - b.s);
   }
 
   /**
