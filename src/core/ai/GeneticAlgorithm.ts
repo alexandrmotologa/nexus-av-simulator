@@ -34,6 +34,7 @@ export interface NeuralAgent {
   deadTimer: number;
   assignedLane: number;
   targetLane: number;
+  laneChangeCooldown: number;
   lastSteer: number;
   lastThrottle: number;
 }
@@ -192,6 +193,7 @@ export class GeneticEngine {
         deadTimer: 0,
         assignedLane: grid.lane,
         targetLane: grid.lane,
+        laneChangeCooldown: 0,
         lastSteer: 0,
         lastThrottle: 0.35,
       };
@@ -229,6 +231,7 @@ export class GeneticEngine {
       agent.deadTimer = 0;
       agent.assignedLane = grid.lane;
       agent.targetLane = grid.lane;
+      agent.laneChangeCooldown = 0;
       agent.lastSteer = 0;
       agent.lastThrottle = 0.35;
       agent.overtakenVehicles.clear();
@@ -344,33 +347,52 @@ export class GeneticEngine {
       throttle = agent.lastThrottle * 0.70 + rawThrottle * 0.30;
       agent.lastThrottle = throttle;
 
-      // 3b. Evaluate Safe Lane Change (Traffic Rules & Non-Chaotic Driving)
-      const radarLead = agent.radar.targetDetected ? agent.radar.targetDistance : Infinity;
-      const needOvertake = radarLead < 22.0 || agent.radar.closingSpeed > 3.0;
+      // 3b. Evaluate Safe Lane Change (Traffic Rules & Non-Chaotic Signaling)
+      if (agent.laneChangeCooldown > 0) {
+        agent.laneChangeCooldown -= dt;
+      }
 
-      if (needOvertake && Math.random() < 0.05) {
+      const currentPhysicalLane = this.track.getLaneIndex(frenet.d);
+      const radarLead = agent.radar.targetDetected ? agent.radar.targetDistance : Infinity;
+      const needOvertake = agent.laneChangeCooldown <= 0 && (radarLead < 18.0 || agent.radar.closingSpeed > 3.0);
+
+      if (needOvertake && agent.targetLane === agent.assignedLane) {
+        const laneStart = this.track.isBidirectional ? this.track.oncomingLaneCount : 0;
         const candidateLanes: number[] = [];
-        if (agent.assignedLane > 0) candidateLanes.push(agent.assignedLane - 1);
+        if (agent.assignedLane > laneStart) candidateLanes.push(agent.assignedLane - 1);
         if (agent.assignedLane < this.track.laneCount - 1) candidateLanes.push(agent.assignedLane + 1);
 
         for (const targetL of candidateLanes) {
           if (this.governor.isLaneChangeSafe(v, this.track, trafficVehicles, targetL)) {
-            if (targetL > agent.assignedLane) {
-              v.state.isBlinkingRight = true;
-              v.state.isBlinkingLeft = false;
-            } else {
-              v.state.isBlinkingLeft = true;
-              v.state.isBlinkingRight = false;
-            }
-            agent.assignedLane = targetL;
+            agent.targetLane = targetL;
+            agent.laneChangeCooldown = 4.0; // Minimum 4 seconds before another lane change
             break;
           }
         }
       }
 
-      // Deactivate blinker once settled into the assigned lane
-      const currentAssignedD = this.track.getLaneCenterD(agent.assignedLane);
-      if (Math.abs(frenet.d - currentAssignedD) < 0.3) {
+      // Turn signals are strictly for active lane changes between different lanes
+      if (agent.targetLane !== agent.assignedLane) {
+        const targetD = this.track.getLaneCenterD(agent.targetLane);
+        const distToTarget = Math.abs(frenet.d - targetD);
+
+        if (currentPhysicalLane === agent.targetLane && distToTarget < 0.45) {
+          // Successfully established inside target lane
+          agent.assignedLane = agent.targetLane;
+          v.state.isBlinkingLeft = false;
+          v.state.isBlinkingRight = false;
+        } else {
+          // Actively transitioning lanes: signal in direction of transition
+          if (agent.targetLane > agent.assignedLane) {
+            v.state.isBlinkingRight = true;
+            v.state.isBlinkingLeft = false;
+          } else {
+            v.state.isBlinkingLeft = true;
+            v.state.isBlinkingRight = false;
+          }
+        }
+      } else {
+        // Cruising inside assigned lane: turn signals are completely OFF (never blink for centering, bends, or roundabouts)
         v.state.isBlinkingLeft = false;
         v.state.isBlinkingRight = false;
       }
@@ -386,7 +408,7 @@ export class GeneticEngine {
         obstacles,
         rawControl,
         dt,
-        agent.assignedLane
+        agent.targetLane
       );
 
       v.step(safeControl, dt);
@@ -663,6 +685,7 @@ export class GeneticEngine {
       agent.deadTimer = 0;
       agent.assignedLane = grid.lane;
       agent.targetLane = grid.lane;
+      agent.laneChangeCooldown = 0;
       agent.lastSteer = 0;
       agent.lastThrottle = 0.35;
       agent.overtakenVehicles.clear();

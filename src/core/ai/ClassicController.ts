@@ -107,18 +107,16 @@ export class ClassicController {
     const crossTrackSteer = -Math.atan((0.95 * lateralOffset) / Math.max(1.5, ego.state.speed * 0.85 + 1.2));
     const headingCorrection = -0.85 * headingError;
 
-    // Turn signal discipline: activate blinkers when navigating between lanes
-    if (Math.abs(lateralOffset) > 0.45) {
-      if (lateralOffset > 0) {
-        // Vehicle is to the right of target lane, moving left towards lane
-        ego.state.isBlinkingLeft = true;
-        ego.state.isBlinkingRight = false;
-      } else {
-        // Vehicle is to the left of target lane, moving right towards lane
-        ego.state.isBlinkingRight = true;
-        ego.state.isBlinkingLeft = false;
-      }
+    // Turn signal discipline: activate blinkers ONLY when executing a lane change between different lanes
+    const currentPhysicalLane = track.getLaneIndex(frenet.d);
+    if (targetLane > currentPhysicalLane) {
+      ego.state.isBlinkingRight = true;
+      ego.state.isBlinkingLeft = false;
+    } else if (targetLane < currentPhysicalLane) {
+      ego.state.isBlinkingLeft = true;
+      ego.state.isBlinkingRight = false;
     } else {
+      // Vehicle is inside its target lane: NEVER blink for following curves or lane centering
       ego.state.isBlinkingLeft = false;
       ego.state.isBlinkingRight = false;
     }

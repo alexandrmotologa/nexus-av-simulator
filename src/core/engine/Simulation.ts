@@ -514,22 +514,15 @@ export class SimulationEngine {
         if (pad.handbrake) rawBrake = 1.0;
       }
 
-      // Automotive Turn Signal Blinker Discipline (Keys Q/E or automatic upon turning)
+      // Automotive Turn Signal Blinker Discipline (Intentional Driver Toggle via Keys Q/E)
       if (this.keysPressed.has('KeyQ')) {
-        this.humanVehicle.state.isBlinkingLeft = true;
+        this.humanVehicle.state.isBlinkingLeft = !this.humanVehicle.state.isBlinkingLeft;
         this.humanVehicle.state.isBlinkingRight = false;
+        this.keysPressed.delete('KeyQ');
       } else if (this.keysPressed.has('KeyE')) {
-        this.humanVehicle.state.isBlinkingRight = true;
+        this.humanVehicle.state.isBlinkingRight = !this.humanVehicle.state.isBlinkingRight;
         this.humanVehicle.state.isBlinkingLeft = false;
-      } else if (rawSteer < -0.25) {
-        this.humanVehicle.state.isBlinkingLeft = true;
-        this.humanVehicle.state.isBlinkingRight = false;
-      } else if (rawSteer > 0.25) {
-        this.humanVehicle.state.isBlinkingRight = true;
-        this.humanVehicle.state.isBlinkingLeft = false;
-      } else if (Math.abs(this.humanVehicle.state.steerAngle) < 0.04) {
-        this.humanVehicle.state.isBlinkingLeft = false;
-        this.humanVehicle.state.isBlinkingRight = false;
+        this.keysPressed.delete('KeyE');
       }
 
       this.humanRadar.update(this.humanVehicle, this.track, trafficVehicles);
