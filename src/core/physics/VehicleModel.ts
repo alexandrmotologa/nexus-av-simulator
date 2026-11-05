@@ -163,8 +163,13 @@ export class VehicleModel {
     this.state.tireStatus = this.tireThermals.getStatus();
 
     const dynamicGrip = this.config.tireGripCoeff * thermalMultiplier;
-    // Skidding triggers only if lateral G-force exceeds dynamic grip limit (> 1.15 G) or tire slip angle saturates violently (> 18 degrees)
-    this.state.isSkidding = lateralG > dynamicGrip * 1.15 || Math.abs(alphaR) > 0.32;
+    // Authentic physical tire grip saturation:
+    // Skidding occurs only when lateral acceleration demand severely exceeds maximum tire grip limit (> 1.25x dynamic grip)
+    // AND rear slip angle saturates violently (> 26 degrees / 0.45 rad), or during an acute vehicle spinout
+    const isGripExceeded = this.state.lateralAcc > dynamicGrip * 1.25;
+    const isSlipSaturated = Math.abs(alphaR) > 0.45;
+    const isSpinout = Math.abs(this.state.yawRate) > 3.0 && Math.abs(this.state.speed) > 3.0;
+    this.state.isSkidding = (isGripExceeded && isSlipSaturated) || isSpinout;
 
     // 5. Update boundary polygon for collisions and rendering
     this.updatePolygon();

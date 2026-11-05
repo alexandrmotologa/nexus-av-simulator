@@ -20,6 +20,10 @@ import { VirtualCamera } from '../sensors/VirtualCamera';
 import { VisionProcessor, VisionDetectionResult } from '../sensors/VisionProcessor';
 import { ContinuousActorCritic } from '../ai/ContinuousActorCritic';
 import { ImitationRecorder } from '../ai/ImitationRecorder';
+import { PedestrianManager } from '../traffic/PedestrianManager';
+import { FrenetTrajectoryPlanner, FrenetTrajectory } from '../planning/FrenetTrajectoryPlanner';
+import { FaultInjectionEngine } from '../faults/FaultInjectionEngine';
+import { TelemetryBridge } from '../telemetry/TelemetryBridge';
 
 export type PilotMode = 'NEUROEVOLUTION' | 'DEEP_RL_AGENT' | 'CLASSIC_ROBOTICS' | 'HUMAN_DRIVER' | 'DUEL';
 export type WeatherMode = 'DRY' | 'WET' | 'NIGHT' | 'FOG';
@@ -83,9 +87,13 @@ export class SimulationEngine {
   public duelManager: DuelManager = new DuelManager();
   public coPilot: CoPilotAdvisor = new CoPilotAdvisor();
   public intersectionManager: IntersectionManager;
+  public pedestrianManager: PedestrianManager;
   public virtualCamera: VirtualCamera;
   public visionProcessor: VisionProcessor;
   public continuousActorCritic: ContinuousActorCritic;
+  public trajectoryPlanner: FrenetTrajectoryPlanner = new FrenetTrajectoryPlanner();
+  public latestBestTrajectory: FrenetTrajectory | null = null;
+  public latestCandidateTrajectories: FrenetTrajectory[] = [];
   public latestVisionResult: VisionDetectionResult | null = null;
   public latestV2IPacket: V2ISignalingPacket | null = null;
   private cameraFrameCounter: number = 0;
@@ -128,6 +136,7 @@ export class SimulationEngine {
     );
     this.humanLidar = new LidarSensor();
     this.intersectionManager = new IntersectionManager(this.track);
+    this.pedestrianManager = new PedestrianManager(this.track);
     this.virtualCamera = new VirtualCamera(160, 80);
     this.visionProcessor = new VisionProcessor(160, 80);
     this.continuousActorCritic = new ContinuousActorCritic(14, 48);
@@ -139,6 +148,7 @@ export class SimulationEngine {
 
     this.track = preset.createTrack();
     this.intersectionManager.setTrack(this.track);
+    this.pedestrianManager.setTrack(this.track);
     this.trafficManager.setTrack(this.track);
     this.trafficManager.spawnFleet(this.trafficCount);
     this.geneticEngine.setTrack(this.track);
@@ -152,6 +162,7 @@ export class SimulationEngine {
   public setCustomTrack(track: Track): void {
     this.track = track;
     this.intersectionManager.setTrack(track);
+    this.pedestrianManager.setTrack(this.track);
     this.trafficManager.setTrack(this.track);
     this.trafficManager.spawnFleet(this.trafficCount);
     this.geneticEngine.setTrack(this.track);
@@ -257,8 +268,40 @@ export class SimulationEngine {
         this.trafficManager.getVehicles(),
         this.weather
       );
+      // Apply optical fault injections (lens dirt / direct solar glare)
+      FaultInjectionEngine.getInstance().applyToCamera(
+        this.virtualCamera.getContext(),
+        frame.width,
+        frame.height
+      );
       this.latestVisionResult = this.visionProcessor.process(frame.imageData);
     }
+
+    // Plan Frenet optimal trajectory lattice periodically
+    if (this.cameraFrameCounter % 3 === 0) {
+      const frenet = this.track.frenet.cartesianToFrenet(
+        activeEgo.state.position,
+        activeEgo.state.heading,
+        activeEgo.state.speed
+      );
+      const planRes = this.trajectoryPlanner.plan(
+        frenet.s,
+        Math.max(1.0, activeEgo.state.speed),
+        activeEgo.state.longitudinalAcc,
+        frenet.d,
+        frenet.d_d,
+        0,
+        Math.max(8.0, this.track.getSpeedLimitAtDistance(frenet.s) / 3.6),
+        this.track,
+        this.obstacleManager.obstacles,
+        this.trafficManager.getVehicles()
+      );
+      this.latestBestTrajectory = planRes.best;
+      this.latestCandidateTrajectories = planRes.candidates;
+    }
+
+    // Broadcast live telemetry packet over WebSocket bridge
+    TelemetryBridge.getInstance().broadcast(this.getTelemetry(), activeEgo.state.position, activeEgo.state.heading);
   }
 
   public getActiveEgoVehicle(): VehicleModel {
@@ -282,9 +325,23 @@ export class SimulationEngine {
     // 1. Update Smart Infrastructure (Signalized Intersections)
     this.intersectionManager.update(dt);
 
-    // 2. Update Traffic NPCs with knowledge of active ego car & obstacles
+    // 2. Update Vulnerable Road Users (Pedestrians & Cyclists)
+    this.pedestrianManager.update(dt, trafficVehicles);
+
+    // 3. Update Traffic NPCs with knowledge of active ego car & obstacles
     const activeEgo = this.getActiveEgoVehicle();
     this.trafficManager.update(dt, activeEgo, obstacles);
+
+    // VRU-AEB Active Safety: Gentle emergency stop if pedestrian or cyclist in forward corridor
+    const vruRisk = this.pedestrianManager.checkVRUCollisionRisk(
+      activeEgo.state.position,
+      activeEgo.state.heading,
+      activeEgo.state.speed
+    );
+    if (vruRisk.mustStop && vruRisk.distance < 14.0) {
+      activeEgo.state.speed = Math.max(0, activeEgo.state.speed - 8.5 * dt);
+      activeEgo.state.isBraking = true;
+    }
 
     // 2. Update Active Mode
     if (this.pilotMode === 'NEUROEVOLUTION') {

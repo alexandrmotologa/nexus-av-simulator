@@ -34,6 +34,26 @@ The simulator implements numerical vehicle dynamics, geometric collision checks 
 ## Visual Previews
 
 <div align="center">
+  <img src="docs/images/nexus_av_frenet_highway_lattice.png" alt="Frenet Optimal Trajectory Planner" width="800" />
+  <p><i>Frenet Optimal Trajectory Planner (Werling Lattice): Real-time polynomial trajectory ribbon evaluating candidate fans across multi-second horizons, speed keeping, and dynamic obstacle clearance on Silicon Expressway.</i></p>
+</div>
+
+<div align="center">
+  <img src="docs/images/nexus_av_fault_injection_suite.png" alt="ISO 26262 ASIL-D Fault Injection Suite" width="800" />
+  <p><i>ISO 26262 ASIL-D Diagnostic Suite: Real-time sensor fault injection including optical mud splatter, sun glare, 90-degree LiDAR sector dropout, CAN steering lag, and brake fade.</i></p>
+</div>
+
+<div align="center">
+  <img src="docs/images/nexus_av_roundabout_topology.png" alt="Complex Road Topologies and Signalized Roundabout" width="800" />
+  <p><i>Complex Road Topologies: Multi-lane circular roundabout with HD-map lane network graphs, approach vectors, and yield-on-entry protocols.</i></p>
+</div>
+
+<div align="center">
+  <img src="docs/images/nexus_av_hybrid_astar_parking.png" alt="Autonomous Valet Parking with Hybrid A-Star" width="800" />
+  <p><i>Autonomous Valet Parking: Perpendicular bay maneuvering using non-holonomic Hybrid A* trajectory planning with pull-up and reverse steer primitives.</i></p>
+</div>
+
+<div align="center">
   <img src="docs/images/nexus_av_front_camera.png" alt="Synthetic Computer Vision HUD" width="800" />
   <p><i>Synthetic Computer Vision HUD: Forward driver perspective with discrete 2D Sobel edge detection, lane boundary lock, obstacle bounding boxes with distance tags, and sign-synchronized road markings.</i></p>
 </div>
@@ -126,6 +146,40 @@ Surrounding civilian traffic operates autonomously through coupled macroscopic a
 * **Waypoint Lookahead**: Evaluates the target lane trajectory via lookahead distance $L_d = \max(8.0, v \cdot 0.9)$ to compute true road curvature and heading error ($\alpha = \theta_{\text{waypoint}} - \theta_{\text{car}}$).
 * **360-Degree LiDAR Repulsion**: Projects LiDAR hit points into the vehicle local frame to calculate lateral distances ($y_{\text{local}}$), generating continuous steering repulsion away from boundaries and obstacles.
 * **Automatic Emergency Braking (AEB)**: Cuts throttle and commands full deceleration when forward headway falls below safety thresholds.
+
+### 8. Frenet Optimal Trajectory Planner (Werling Lattice Algorithm)
+* **Decoupled Polynomial Splines**: Plans longitudinal velocity keeping trajectories using quartic polynomials $s(t)$ and lateral lane changing trajectories using quintic polynomials $d(t)$ that minimize jerk:
+  $$J_t = \int_0^T \dddot{d}(t)^2 dt, \quad J_s = \int_0^T \dddot{s}(t)^2 dt$$
+* **Multi-Horizon Candidate Fans**: Generates candidate trajectories across time horizons ($T \in [2.5, 3.5, 4.5]\text{ s}$), lateral targets, and target velocities.
+* **Cost Function Optimization**: Evaluates candidate paths against lateral jerk, longitudinal jerk, time duration, deviation from speed limits, target lane offset, and collision margins against obstacles and traffic.
+* **Canvas Trajectory Ribbon**: Projects the optimal planned trajectory as a green ribbon with candidate curves visible in the background.
+
+### 9. Vulnerable Road Users and VRU-AEB Active Safety
+* **High-Contrast Zebra Crosswalks**: Renders standard zebra crosswalk markings across all track lanes with approach warning signs.
+* **Autonomous Pedestrian State Machine**: Pedestrians walk on sidewalks, wait for gaps in traffic, and cross lanes at realistic walking velocities (1.2 to 1.6 m/s).
+* **Cyclist Marginal Flow**: Cyclists navigate outer road shoulders at realistic bike speeds (15 to 25 km/h).
+* **VRU-AEB Emergency Braking**: Scans forward road corridors for pedestrians and cyclists within 14 meters, cutting drive power and engaging automatic emergency deceleration.
+
+### 10. Complex Road Topologies and HD-Map Network Graph
+* **Directed Topology Graph**: Models multi-lane road networks (`RoadNetworkGraph`) with lane segment connectors, junction forks, and merge points.
+* **Highway On-Ramp Acceleration and Merge**: Merging vehicles traverse dedicated acceleration lanes and evaluate longitudinal gap acceptance ($t_{\text{gap}} \ge 1.8\text{ s}$) before blending into high-speed mainline traffic.
+* **Multi-Lane Roundabout**: Multi-lane circular roundabout with yield-at-entry traffic protocols and radial arterial feeder roads.
+
+### 11. ISO 26262 ASIL-D Sensor and Actuator Fault Injection Suite
+* **Optical Degeneracy**: Simulates camera mud splatter occlusion and direct high-beam solar glare filters.
+* **LiDAR Failures**: Injects a 90-degree blind sector dropout, Gaussian range jitter noise, and precipitation backscatter.
+* **Radar Ghost Artifacts**: Emits multipath ghost reflections mimicking non-existent obstacle echoes.
+* **Actuator Degradation**: Introduces configurable CAN bus steering latency (up to 300ms) and hydraulic brake thermal fade (up to 70% braking force loss).
+* **Interactive Control Drawer**: Slide-out diagnostic drawer with real-time toggle switches and sliders to test AI fault tolerance.
+
+### 12. Autonomous Valet Parking and Hybrid A-Star Path Search
+* **Parking Stall Geometry**: Models perpendicular 90-degree bays and curbside parallel stalls with access aisles.
+* **Non-Holonomic Hybrid A-Star**: Plans multi-point reverse parking paths respecting minimum turning radius, wheelbase geometry, and forward/reverse gear transitions.
+* **Stall Alignment**: Maneuvers vehicle from aisle standstill through forward pull-up and reverse steer-in alignment.
+
+### 13. Real-Time Telemetry Bridge Protocol (WebSocket and ROS2)
+* **Standardized JSON Telemetry Packets**: Broadcasts sequence numbers, timestamps, pose coordinates ($x, y, \theta$), speed, G-forces, slip status, V2X traffic light state, and vision offsets.
+* **Robotics Middleware Streaming**: Connects to `ws://localhost:9090` for direct integration with external ROS2, Autoware, or custom robotics visualization tools.
 
 ---
 

@@ -26,6 +26,7 @@ import {
   FileSpreadsheet,
   FileJson,
   PenTool,
+  ShieldAlert,
 } from 'lucide-react';
 
 interface ControlPanelProps {
@@ -35,6 +36,8 @@ interface ControlPanelProps {
   onSelectTrack: (trackId: string) => void;
   isTrackEditorOpen?: boolean;
   onToggleTrackEditor?: () => void;
+  isFaultDrawerOpen?: boolean;
+  onToggleFaultDrawer?: () => void;
   trafficDensity: number;
   onSetTrafficDensity: (count: number) => void;
   showLidar: boolean;
@@ -72,6 +75,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   onSelectTrack,
   isTrackEditorOpen,
   onToggleTrackEditor,
+  isFaultDrawerOpen,
+  onToggleFaultDrawer,
   trafficDensity,
   onSetTrafficDensity,
   showLidar,
@@ -177,6 +182,21 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
           >
             <PenTool className="w-3.5 h-3.5 text-sky-400" />
             <span className="hidden xl:inline">{isTrackEditorOpen ? 'Close Builder' : 'Track Builder'}</span>
+          </button>
+        )}
+
+        {onToggleFaultDrawer && (
+          <button
+            onClick={onToggleFaultDrawer}
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+              isFaultDrawerOpen
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-[0_0_10px_rgba(245,158,11,0.3)]'
+                : 'bg-slate-950 border-slate-800 text-slate-300 hover:text-white'
+            }`}
+            title="ISO 26262 ASIL-D Sensor & Actuator Fault Injection Suite"
+          >
+            <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden xl:inline">{isFaultDrawerOpen ? 'Close Faults' : 'Fault Suite'}</span>
           </button>
         )}
       </div>

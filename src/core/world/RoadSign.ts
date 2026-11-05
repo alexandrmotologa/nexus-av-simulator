@@ -7,7 +7,8 @@ export type RoadSignType =
   | 'SPEED_LIMIT_120'
   | 'SHARP_CURVE_LEFT'
   | 'SHARP_CURVE_RIGHT'
-  | 'NO_OVERTAKING';
+  | 'NO_OVERTAKING'
+  | 'PEDESTRIAN_CROSSING';
 
 export interface RoadSign {
   id: string;

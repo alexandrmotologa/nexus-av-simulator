@@ -20,6 +20,8 @@ import { TelemetryExporter } from './core/telemetry/TelemetryExporter';
 import { TrackEditor } from './core/world/TrackEditor';
 import { TrackEditorDrawer } from './components/TrackEditorDrawer';
 import { CameraFeedHUD } from './components/CameraFeedHUD';
+import { FaultInjectionDrawer } from './components/FaultInjectionDrawer';
+import { TelemetryBridge } from './core/telemetry/TelemetryBridge';
 import { AlertOctagon } from 'lucide-react';
 
 export function App() {
@@ -80,6 +82,7 @@ export function App() {
   const [activeIncident, setActiveIncident] = useState<IncidentReport | null>(null);
   const [showBlackBoxModal, setShowBlackBoxModal] = useState<boolean>(false);
   const [isTrackEditorOpen, setIsTrackEditorOpen] = useState<boolean>(false);
+  const [isFaultDrawerOpen, setIsFaultDrawerOpen] = useState<boolean>(false);
   const trackEditorRef = useRef<TrackEditor>(new TrackEditor());
   const draggingWaypointRef = useRef<number>(-1);
 
@@ -207,13 +210,25 @@ export function App() {
           showBoundingBoxes,
           trackedEntities,
           trafficLights: engine.intersectionManager.lights,
+          crosswalks: engine.pedestrianManager.crosswalks,
+          vrus: engine.pedestrianManager.vrus,
+          trajectoryBest: engine.latestBestTrajectory,
+          trajectoryCandidates: engine.latestCandidateTrajectories,
         }
       );
 
       // Throttle UI React state updates to 15 Hz for peak 60fps canvas performance
       if (timestamp - lastUiUpdate > 66) {
-        setTelemetry(engine.getTelemetry());
+        const nextTelemetry = engine.getTelemetry();
+        setTelemetry(nextTelemetry);
         setObstacleCount(engine.obstacleManager.obstacles.length);
+
+        const activeEgo = activeFollow || engine.humanVehicle;
+        TelemetryBridge.getInstance().broadcast(
+          nextTelemetry,
+          activeEgo.state.position,
+          activeEgo.state.heading
+        );
 
         const incident = BlackBoxRecorder.getInstance().activeIncident;
         if (incident && !activeIncident) {
@@ -714,6 +729,12 @@ export function App() {
         onApplyTrack={handleApplyCustomTrack}
       />
 
+      {/* ISO 26262 ASIL-D Fault Injection Diagnostic Suite Drawer */}
+      <FaultInjectionDrawer
+        isOpen={isFaultDrawerOpen}
+        onClose={() => setIsFaultDrawerOpen(false)}
+      />
+
       {/* Picture-in-Picture Virtual Front Camera & Real-Time Computer Vision HUD */}
       <CameraFeedHUD
         cameraCanvas={engineRef.current?.virtualCamera.getCanvas() || null}
@@ -729,6 +750,8 @@ export function App() {
           onSelectTrack={handleSelectTrack}
           isTrackEditorOpen={isTrackEditorOpen}
           onToggleTrackEditor={() => setIsTrackEditorOpen(!isTrackEditorOpen)}
+          isFaultDrawerOpen={isFaultDrawerOpen}
+          onToggleFaultDrawer={() => setIsFaultDrawerOpen(!isFaultDrawerOpen)}
           trafficDensity={trafficDensity}
           onSetTrafficDensity={handleSetTrafficDensity}
           showLidar={showLidar}

@@ -176,48 +176,57 @@ export class Track {
       speedValue: this.isBidirectional ? 80 : 90,
     });
 
-    // 2. Sample track curvature to place warning and reduction signs before tight corners
-    const interval = 120.0;
-    const signCount = Math.floor(length / interval);
+    // 2. Scan track geometry to place warning and speed reduction signs before curves and hazards
+    const stepScan = 45.0;
+    const scanSteps = Math.floor(length / stepScan);
+    let lastSignS = 30.0;
 
-    for (let i = 1; i < signCount; i++) {
-      const s = i * interval;
-      const state = this.spline.evaluateAtDistance(s + 35.0);
-      const isSharpCurve = Math.abs(state.curvature) > 0.012;
+    for (let i = 1; i < scanSteps; i++) {
+      const s = i * stepScan;
+      if (s - lastSignS < 50.0 || (length - s) < 40.0) continue;
+
+      const stateAhead = this.spline.evaluateAtDistance(s + 30.0);
+      const isCurveAhead = Math.abs(stateAhead.curvature) > 0.0065;
 
       const signPos = this.frenet.frenetToCartesian(s, roadsideD);
 
-      if (isSharpCurve) {
-        // Warning sign 35m before the curve
+      if (isCurveAhead) {
+        // Curve warning sign 30m before the curve apex
         this.signs.push({
           id: `sign-curve-${i}`,
-          type: state.curvature > 0 ? 'SHARP_CURVE_LEFT' : 'SHARP_CURVE_RIGHT',
+          type: stateAhead.curvature > 0 ? 'SHARP_CURVE_LEFT' : 'SHARP_CURVE_RIGHT',
           s,
           position: signPos.position,
           heading: signPos.heading,
         });
 
-        // 50 km/h reduction sign
-        const speed50Pos = this.frenet.frenetToCartesian(s + 15.0, roadsideD);
-        this.signs.push({
-          id: `sign-speed50-${i}`,
-          type: 'SPEED_LIMIT_50',
-          s: s + 15.0,
-          position: speed50Pos.position,
-          heading: speed50Pos.heading,
-          speedValue: 50,
-        });
-      } else {
-        // High-speed cruise segment
-        const limit = (i % 2 === 0) ? 120 : 80;
+        // 50 km/h regulatory speed reduction for sharp corners, 80 km/h for sweeping bends
+        const isSharp = Math.abs(stateAhead.curvature) > 0.012;
+        const speedVal = isSharp ? 50 : 80;
+        const speedPos = this.frenet.frenetToCartesian(s + 12.0, roadsideD);
+
         this.signs.push({
           id: `sign-speed-${i}`,
-          type: limit === 120 ? 'SPEED_LIMIT_120' : 'SPEED_LIMIT_80',
+          type: isSharp ? 'SPEED_LIMIT_50' : 'SPEED_LIMIT_80',
+          s: s + 12.0,
+          position: speedPos.position,
+          heading: speedPos.heading,
+          speedValue: speedVal,
+        });
+
+        lastSignS = s + 12.0;
+      } else if (s - lastSignS > 110.0) {
+        // Open straight cruise sector
+        const limitVal = (i % 2 === 0) ? 120 : 90;
+        this.signs.push({
+          id: `sign-cruise-${i}`,
+          type: limitVal === 120 ? 'SPEED_LIMIT_120' : 'SPEED_LIMIT_90',
           s,
           position: signPos.position,
           heading: signPos.heading,
-          speedValue: limit,
+          speedValue: limitVal,
         });
+        lastSignS = s;
       }
     }
   }
@@ -253,7 +262,7 @@ export class Track {
    * Evaluates the legal lane divider marking type at distance s for a specific divider index.
    * Strictly enforces traffic rules:
    * - Opposite flow median in bidirectional road -> DOUBLE_SOLID_YELLOW
-   * - Sharp curves (|curvature| > 0.009) or hazard/speed-50 sign zone -> SOLID_WHITE (lane change/overtaking strictly prohibited)
+   * - Sharp curves (|curvature| > 0.0055) or curve warning / speed reduction zone -> SOLID_WHITE (lane changes / overtaking strictly prohibited)
    * - Approach transition leading into hazard zone (-35m to -5m) -> WARNING_DASHED_WHITE (denser warning dashes)
    * - Open straight cruise sectors -> DASHED_WHITE (overtaking/lane change allowed)
    */
@@ -265,24 +274,31 @@ export class Track {
     const length = this.spline.totalLength;
     if (length <= 0) return 'DASHED_WHITE';
 
-    // Sample local path curvature
+    // Sample local path curvature: any noticeable curve prohibits overtaking
     const state = this.spline.evaluateAtDistance(s);
     const curvature = Math.abs(state.curvature);
 
-    let isHazardZone = curvature > 0.009;
+    let isHazardZone = curvature > 0.0055;
     let isWarningApproach = false;
 
     // Check relationship with road signage
     for (const sign of this.signs) {
-      if (sign.type === 'SHARP_CURVE_LEFT' || sign.type === 'SHARP_CURVE_RIGHT' || sign.type === 'SPEED_LIMIT_50') {
+      const isRestrictionSign =
+        sign.type === 'SHARP_CURVE_LEFT' ||
+        sign.type === 'SHARP_CURVE_RIGHT' ||
+        sign.type === 'SPEED_LIMIT_50' ||
+        sign.type === 'NO_OVERTAKING' ||
+        sign.type === 'PEDESTRIAN_CROSSING';
+
+      if (isRestrictionSign) {
         let delta = s - sign.s;
         if (this.closed) {
           if (delta < -length * 0.5) delta += length;
           if (delta > length * 0.5) delta -= length;
         }
 
-        // Active hazard zone: 5m before the warning sign through 55m past it
-        if (delta >= -5.0 && delta <= 55.0) {
+        // Active restriction zone: 5m before the warning sign through 60m past it
+        if (delta >= -5.0 && delta <= 60.0) {
           isHazardZone = true;
           break;
         }

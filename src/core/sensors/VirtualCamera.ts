@@ -42,6 +42,10 @@ export class VirtualCamera {
     return this.canvas;
   }
 
+  public getContext(): CanvasRenderingContext2D {
+    return this.ctx;
+  }
+
   /**
    * Transforms a 2D world position into normalized camera screen coordinates [x, y, depth]
    * returns null if point is behind the camera or outside clip range.

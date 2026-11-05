@@ -8,6 +8,9 @@ import { RoadSign } from '../core/world/RoadSign';
 import { TrafficLight } from '../core/world/TrafficLight';
 import { ParticleSystem } from './ParticleSystem';
 import { TrackedEntity } from '../core/sensors/SensorFusion';
+import { FrenetTrajectory } from '../core/planning/FrenetTrajectoryPlanner';
+import { Crosswalk } from '../core/world/Crosswalk';
+import { PedestrianModel } from '../core/traffic/PedestrianModel';
 
 export interface RenderOptions {
   showLidar: boolean;
@@ -20,6 +23,10 @@ export interface RenderOptions {
   showBoundingBoxes?: boolean;
   trackedEntities?: TrackedEntity[];
   trafficLights?: TrafficLight[];
+  trajectoryBest?: FrenetTrajectory | null;
+  trajectoryCandidates?: FrenetTrajectory[];
+  crosswalks?: Crosswalk[];
+  vrus?: PedestrianModel[];
 }
 
 export class CanvasRenderer {
@@ -104,7 +111,13 @@ export class CanvasRenderer {
     this.particles.update(0.016);
     this.particles.render(this.ctx);
 
-    // 3. Render NPC Traffic Vehicles
+    // 3. Render Frenet Lattice Trajectory Ribbon (Optimal & Candidate Fan)
+    this.renderTrajectoryRibbon(options.trajectoryBest, options.trajectoryCandidates);
+
+    // 4. Render Vulnerable Road Users (Pedestrians & Cyclists)
+    this.renderVRUs(options.vrus || []);
+
+    // 5. Render NPC Traffic Vehicles
     for (const traffic of trafficVehicles) {
       this.renderVehicle(traffic, false, options.weather);
     }
@@ -436,7 +449,10 @@ export class CanvasRenderer {
     // E. V2X Smart Traffic Signals & Intersection Stop Bars
     this.renderTrafficLights(options.trafficLights || [], track);
 
-    // F. Waypoint handles for track editor
+    // F. High-Contrast Zebra Crosswalk Markings
+    this.renderCrosswalks(options.crosswalks || [], track);
+
+    // G. Waypoint handles for track editor
     if (options.showWaypoints) {
       for (const wp of track.spline.getWaypoints()) {
         this.ctx.beginPath();
@@ -501,6 +517,46 @@ export class CanvasRenderer {
         this.ctx.textAlign = 'center';
         this.ctx.textBaseline = 'middle';
         this.ctx.fillText(`${sign.speedValue}`, 0, 0.08);
+      } else if (sign.type === 'PEDESTRIAN_CROSSING') {
+        // Triangular danger sign with pedestrian pictogram
+        this.ctx.fillStyle = '#dc2626';
+        this.ctx.beginPath();
+        this.ctx.moveTo(0, -1.5);
+        this.ctx.lineTo(1.4, 1.1);
+        this.ctx.lineTo(-1.4, 1.1);
+        this.ctx.closePath();
+        this.ctx.fill();
+
+        this.ctx.fillStyle = '#fef08a';
+        this.ctx.beginPath();
+        this.ctx.moveTo(0, -1.1);
+        this.ctx.lineTo(1.05, 0.85);
+        this.ctx.lineTo(-1.05, 0.85);
+        this.ctx.closePath();
+        this.ctx.fill();
+
+        this.ctx.fillStyle = '#0f172a';
+        this.ctx.font = 'bold 1.0px sans-serif';
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'middle';
+        this.ctx.fillText('🚶', 0, 0.08);
+      } else if (sign.type === 'NO_OVERTAKING') {
+        // Circular prohibition sign
+        this.ctx.fillStyle = '#dc2626';
+        this.ctx.beginPath();
+        this.ctx.arc(0, 0, 1.45, 0, Math.PI * 2);
+        this.ctx.fill();
+
+        this.ctx.fillStyle = '#f8fafc';
+        this.ctx.beginPath();
+        this.ctx.arc(0, 0, 1.15, 0, Math.PI * 2);
+        this.ctx.fill();
+
+        this.ctx.fillStyle = '#0f172a';
+        this.ctx.font = 'bold 0.85px sans-serif';
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'middle';
+        this.ctx.fillText('⛔', 0, 0.05);
       } else {
         // 3. Triangular Curve Warning Sign
         this.ctx.fillStyle = '#dc2626';
@@ -591,6 +647,137 @@ export class CanvasRenderer {
     }
   }
 
+  private renderTrajectoryRibbon(
+    best: FrenetTrajectory | null | undefined,
+    candidates: FrenetTrajectory[] | undefined
+  ): void {
+    if (!candidates || candidates.length === 0) return;
+
+    // 1. Render candidate lattice fan (faint translucent tracks)
+    this.ctx.lineWidth = 0.16;
+    for (const c of candidates) {
+      if (c === best || c.points.length < 2) continue;
+      this.ctx.strokeStyle = c.isValid ? 'rgba(148, 163, 184, 0.16)' : 'rgba(239, 68, 68, 0.08)';
+      this.renderPolyline(c.points);
+    }
+
+    // 2. Render chosen optimal jerk-minimized trajectory (glowing emerald ribbon)
+    if (best && best.points.length > 1) {
+      this.ctx.save();
+      this.ctx.strokeStyle = 'rgba(34, 197, 94, 0.85)';
+      this.ctx.lineWidth = 0.8;
+      this.ctx.shadowColor = '#22c55e';
+      this.ctx.shadowBlur = 8;
+      this.renderPolyline(best.points);
+
+      this.ctx.strokeStyle = '#86efac';
+      this.ctx.lineWidth = 0.35;
+      this.ctx.shadowBlur = 0;
+      this.renderPolyline(best.points);
+
+      for (let i = 0; i < best.points.length; i += 3) {
+        const pt = best.points[i];
+        this.ctx.beginPath();
+        this.ctx.arc(pt.x, pt.y, 0.28, 0, Math.PI * 2);
+        this.ctx.fillStyle = '#22c55e';
+        this.ctx.fill();
+      }
+      this.ctx.restore();
+    }
+  }
+
+  private renderCrosswalks(crosswalks: Crosswalk[], track: Track): void {
+    if (!crosswalks || crosswalks.length === 0) return;
+
+    for (const cw of crosswalks) {
+      const halfW = track.totalWidth * 0.5;
+      const barLen = cw.width;
+      const barThickness = 0.55;
+      const spacing = 1.0;
+      const numBars = Math.floor(track.totalWidth / spacing);
+
+      this.ctx.save();
+      this.ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+
+      for (let i = 0; i < numBars; i++) {
+        const d = -halfW + 0.6 + i * spacing;
+        const cart = track.frenet.frenetToCartesian(cw.s, d);
+
+        this.ctx.save();
+        this.ctx.translate(cart.position.x, cart.position.y);
+        this.ctx.rotate(cart.heading);
+        this.ctx.fillRect(-barLen * 0.5, -barThickness * 0.5, barLen, barThickness);
+        this.ctx.restore();
+      }
+      this.ctx.restore();
+    }
+  }
+
+  private renderVRUs(vrus: PedestrianModel[]): void {
+    if (!vrus || vrus.length === 0) return;
+
+    for (const vru of vrus) {
+      this.ctx.save();
+      this.ctx.translate(vru.position.x, vru.position.y);
+      this.ctx.rotate(vru.heading);
+
+      if (vru.type === 'PEDESTRIAN') {
+        // Drop shadow
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+        this.ctx.beginPath();
+        this.ctx.ellipse(0.1, 0.1, 0.5, 0.35, 0, 0, Math.PI * 2);
+        this.ctx.fill();
+
+        // Shoulders / Torso
+        this.ctx.fillStyle = vru.isDamaged ? '#ef4444' : '#3b82f6';
+        this.ctx.beginPath();
+        this.ctx.ellipse(0, 0, 0.28, 0.45, 0, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.ctx.strokeStyle = '#1e3a8a';
+        this.ctx.lineWidth = 0.08;
+        this.ctx.stroke();
+
+        // Head
+        this.ctx.fillStyle = '#fed7aa';
+        this.ctx.beginPath();
+        this.ctx.arc(0, 0, 0.22, 0, Math.PI * 2);
+        this.ctx.fill();
+
+        // Cap
+        this.ctx.fillStyle = '#334155';
+        this.ctx.beginPath();
+        this.ctx.arc(0.04, 0, 0.2, -Math.PI * 0.5, Math.PI * 0.5);
+        this.ctx.fill();
+      } else {
+        // CYCLIST
+        this.ctx.strokeStyle = '#0f172a';
+        this.ctx.lineWidth = 0.12;
+        this.ctx.beginPath();
+        this.ctx.moveTo(-0.7, 0);
+        this.ctx.lineTo(0.7, 0);
+        this.ctx.stroke();
+
+        this.ctx.fillStyle = '#334155';
+        this.ctx.beginPath();
+        this.ctx.arc(-0.65, 0, 0.24, 0, Math.PI * 2);
+        this.ctx.arc(0.65, 0, 0.24, 0, Math.PI * 2);
+        this.ctx.fill();
+
+        this.ctx.fillStyle = '#eab308';
+        this.ctx.beginPath();
+        this.ctx.ellipse(0, 0, 0.28, 0.38, 0, 0, Math.PI * 2);
+        this.ctx.fill();
+
+        this.ctx.fillStyle = '#ef4444';
+        this.ctx.beginPath();
+        this.ctx.arc(0.12, 0, 0.22, 0, Math.PI * 2);
+        this.ctx.fill();
+      }
+
+      this.ctx.restore();
+    }
+  }
+
   private fogOffset: number = 0;
 
   public renderVehicle(
@@ -676,8 +863,8 @@ export class CanvasRenderer {
     this.ctx.fillRect(rearAxleX - wheelL * 0.5, -halfW - wheelW * 0.5, wheelL, wheelW);
 
     // Procedural Tire Smoke Particles (Emitted only during authentic high-G lateral skidding or severe emergency lockup braking)
-    const isViolentSkid = v.isSkidding && v.lateralAcc > 11.0 && v.speed > 8.0;
-    const isEmergencyLockup = v.isBraking && v.longitudinalAcc < -7.0 && v.speed > 8.0;
+    const isViolentSkid = v.isSkidding && v.lateralAcc > 14.5 && v.speed > 8.0;
+    const isEmergencyLockup = v.isBraking && v.longitudinalAcc < -8.5 && v.speed > 8.0;
     if (!v.isDamaged && (isViolentSkid || isEmergencyLockup)) {
       const intensity = isViolentSkid ? 1.0 : 0.65;
       const cosH = Math.cos(v.heading);
@@ -761,13 +948,7 @@ export class CanvasRenderer {
       this.ctx.restore();
     }
 
-    // Skidmark generation
-    if (v.isSkidding) {
-      this.ctx.fillStyle = 'rgba(239, 68, 68, 0.8)';
-      this.ctx.beginPath();
-      this.ctx.arc(0, 0, 0.4, 0, Math.PI * 2);
-      this.ctx.fill();
-    }
+
 
     this.ctx.restore();
   }

@@ -159,4 +159,69 @@ export const TRACK_PRESETS: TrackPresetMeta[] = [
       return new Track('transfagarasan-pass', 'Transfăgărășan Two-Way Pass (4 Lanes)', waypoints, 4, 3.8, true, true, 2);
     },
   },
+  {
+    id: 'highway-on-ramp',
+    name: 'Silicon Expressway & On-Ramp (5 Lanes)',
+    description: 'High-speed 5-lane arterial with highway acceleration entrance lane and variable speed zones.',
+    difficulty: 'Intermediate',
+    laneCount: 5,
+    laneWidth: 4.0,
+    closed: true,
+    createTrack: () => {
+      const waypoints = [
+        new Vector2D(0, 0),
+        new Vector2D(400, 30),
+        new Vector2D(750, 160),
+        new Vector2D(900, 380),
+        new Vector2D(780, 600),
+        new Vector2D(420, 640),
+        new Vector2D(80, 540),
+        new Vector2D(-180, 420),
+        new Vector2D(-300, 220),
+        new Vector2D(-200, 50),
+      ];
+      return new Track('highway-on-ramp', 'Silicon Expressway & On-Ramp (5 Lanes)', waypoints, 5, 4.0, true);
+    },
+  },
+  {
+    id: 'roundabout-circus',
+    name: 'Etoile Mega Roundabout (4 Lanes)',
+    description: 'Continuous 4-lane circular orbital with multiple radial approach vectors and strict yield etiquette.',
+    difficulty: 'Beginner',
+    laneCount: 4,
+    laneWidth: 4.2,
+    closed: true,
+    createTrack: () => {
+      const R = 220.0;
+      const waypoints: Vector2D[] = [];
+      const steps = 12;
+      for (let i = 0; i < steps; i++) {
+        const theta = (i / steps) * Math.PI * 2;
+        waypoints.push(new Vector2D(Math.cos(theta) * R, Math.sin(theta) * R));
+      }
+      return new Track('roundabout-circus', 'Etoile Mega Roundabout (4 Lanes)', waypoints, 4, 4.2, true);
+    },
+  },
+  {
+    id: 'valet-parking',
+    name: 'Valet Parking Facility (Bay Maneuvering)',
+    description: 'Precision parking terminal with marked stalls, narrow access aisle, and tight multi-point reversing challenges.',
+    difficulty: 'Expert',
+    laneCount: 2,
+    laneWidth: 4.8,
+    closed: true,
+    createTrack: () => {
+      const waypoints = [
+        new Vector2D(-70, 0),
+        new Vector2D(70, 0),
+        new Vector2D(110, 45),
+        new Vector2D(110, 110),
+        new Vector2D(70, 155),
+        new Vector2D(-70, 155),
+        new Vector2D(-110, 110),
+        new Vector2D(-110, 45),
+      ];
+      return new Track('valet-parking', 'Valet Parking Facility (Bay Maneuvering)', waypoints, 2, 4.8, true);
+    },
+  },
 ];
