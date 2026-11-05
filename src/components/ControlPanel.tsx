@@ -28,6 +28,7 @@ import {
   PenTool,
   ShieldAlert,
   ShieldCheck,
+  Radio,
 } from 'lucide-react';
 
 interface ControlPanelProps {
@@ -41,6 +42,9 @@ interface ControlPanelProps {
   onToggleFaultDrawer?: () => void;
   isNCAPDrawerOpen?: boolean;
   onToggleNCAPDrawer?: () => void;
+  isPlatoonDrawerOpen?: boolean;
+  onTogglePlatoonDrawer?: () => void;
+  platoonActive?: boolean;
   trafficDensity: number;
   onSetTrafficDensity: (count: number) => void;
   showLidar: boolean;
@@ -82,6 +86,9 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   onToggleFaultDrawer,
   isNCAPDrawerOpen,
   onToggleNCAPDrawer,
+  isPlatoonDrawerOpen,
+  onTogglePlatoonDrawer,
+  platoonActive = false,
   trafficDensity,
   onSetTrafficDensity,
   showLidar,
@@ -217,6 +224,23 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
           >
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
             <span className="hidden xl:inline">{isNCAPDrawerOpen ? 'Close NCAP' : 'Euro NCAP'}</span>
+          </button>
+        )}
+
+        {onTogglePlatoonDrawer && (
+          <button
+            onClick={onTogglePlatoonDrawer}
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+              isPlatoonDrawerOpen
+                ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50 shadow-[0_0_10px_rgba(6,182,212,0.3)]'
+                : platoonActive
+                ? 'bg-cyan-950/80 border-cyan-600 text-cyan-300 animate-pulse'
+                : 'bg-slate-950 border-slate-800 text-slate-300 hover:text-white'
+            }`}
+            title="Connected Vehicle-to-Vehicle (V2V) Cooperative Platoon Suite"
+          >
+            <Radio className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden xl:inline">{isPlatoonDrawerOpen ? 'Close V2V' : 'V2V Platoon'}</span>
           </button>
         )}
       </div>

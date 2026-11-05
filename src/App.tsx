@@ -22,6 +22,7 @@ import { TrackEditorDrawer } from './components/TrackEditorDrawer';
 import { CameraFeedHUD } from './components/CameraFeedHUD';
 import { FaultInjectionDrawer } from './components/FaultInjectionDrawer';
 import { EuroNCAPDrawer } from './components/EuroNCAPDrawer';
+import { PlatoonDrawer } from './components/PlatoonDrawer';
 import { EuroNCAPScenarioType } from './core/scenarios/EuroNCAPEngine';
 import { TelemetryBridge } from './core/telemetry/TelemetryBridge';
 import { AlertOctagon } from 'lucide-react';
@@ -86,6 +87,7 @@ export function App() {
   const [isTrackEditorOpen, setIsTrackEditorOpen] = useState<boolean>(false);
   const [isFaultDrawerOpen, setIsFaultDrawerOpen] = useState<boolean>(false);
   const [isNCAPDrawerOpen, setIsNCAPDrawerOpen] = useState<boolean>(false);
+  const [isPlatoonDrawerOpen, setIsPlatoonDrawerOpen] = useState<boolean>(false);
   const trackEditorRef = useRef<TrackEditor>(new TrackEditor());
   const draggingWaypointRef = useRef<number>(-1);
 
@@ -221,6 +223,9 @@ export function App() {
           heatmapPoints: engine.telemetryHeatmap.points,
           ncapVehicle: engine.euroNCAP.testVehicle,
           ncapPedestrian: engine.euroNCAP.testPedestrian,
+          platoonVehicles: engine.platoonManager.isActive ? engine.platoonManager.getVehicles() : undefined,
+          platoonActive: engine.platoonManager.isActive,
+          platoonMembers: engine.platoonManager.getTelemetry().members,
         }
       );
 
@@ -585,6 +590,36 @@ export function App() {
     engineRef.current?.euroNCAP.reset();
   };
 
+  const handleTogglePlatoon = (active: boolean) => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    if (active) {
+      const ego = getActiveEgoVehicle();
+      engine.platoonManager.activatePlatoon(engine.track, ego, 4);
+      if (engine.platoonManager.members.length > 0) {
+        followedVehicleRef.current = engine.platoonManager.members[0].vehicle;
+        setIsCameraLocked(true);
+      }
+    } else {
+      engine.platoonManager.deactivatePlatoon();
+      followedVehicleRef.current = null;
+    }
+  };
+
+  const handleSetPlatoonSpeed = (speedKmh: number) => {
+    engineRef.current?.platoonManager.setTargetSpeed(speedKmh);
+  };
+
+  const handleSetPlatoonHeadway = (headwaySec: number) => {
+    engineRef.current?.platoonManager.setTimeHeadway(headwaySec);
+  };
+
+  const handleTriggerPlatoonManeuver = (direction: 'LEFT' | 'RIGHT') => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.platoonManager.triggerCoordinatedLaneChange(direction, engine.track);
+  };
+
   const showSynapse =
     hudView === 'synapse' ||
     hudView === 'both' ||
@@ -782,6 +817,17 @@ export function App() {
         activeScenario={telemetry.ncapScenario}
       />
 
+      {/* Connected V2V Cooperative Platoon Suite Drawer */}
+      <PlatoonDrawer
+        isOpen={isPlatoonDrawerOpen}
+        onClose={() => setIsPlatoonDrawerOpen(false)}
+        telemetry={telemetry.platoon}
+        onTogglePlatoon={handleTogglePlatoon}
+        onSetSpeed={handleSetPlatoonSpeed}
+        onSetHeadway={handleSetPlatoonHeadway}
+        onTriggerManeuver={handleTriggerPlatoonManeuver}
+      />
+
       {/* Picture-in-Picture Virtual Front Camera & Real-Time Computer Vision HUD */}
       <CameraFeedHUD
         cameraCanvas={engineRef.current?.virtualCamera.getCanvas() || null}
@@ -801,6 +847,9 @@ export function App() {
           onToggleFaultDrawer={() => setIsFaultDrawerOpen(!isFaultDrawerOpen)}
           isNCAPDrawerOpen={isNCAPDrawerOpen}
           onToggleNCAPDrawer={() => setIsNCAPDrawerOpen(!isNCAPDrawerOpen)}
+          isPlatoonDrawerOpen={isPlatoonDrawerOpen}
+          onTogglePlatoonDrawer={() => setIsPlatoonDrawerOpen(!isPlatoonDrawerOpen)}
+          platoonActive={telemetry.platoon?.isActive}
           trafficDensity={trafficDensity}
           onSetTrafficDensity={handleSetTrafficDensity}
           showLidar={showLidar}

@@ -29,6 +29,7 @@ import { EuroNCAPEngine, EuroNCAPScenarioType, EuroNCAPVerdict } from '../scenar
 import { GhostLapManager } from '../telemetry/GhostLapManager';
 import { TelemetryHeatmap } from '../telemetry/TelemetryHeatmap';
 import { ComfortEnergyMetrics, ComfortEnergyStatus } from '../physics/ComfortEnergyMetrics';
+import { V2VPlatoonManager, PlatoonTelemetry } from '../v2v/V2VPlatoonManager';
 
 export type PilotMode = 'NEUROEVOLUTION' | 'DEEP_RL_AGENT' | 'CLASSIC_ROBOTICS' | 'HUMAN_DRIVER' | 'DUEL';
 export type WeatherMode = 'DRY' | 'WET' | 'NIGHT' | 'FOG';
@@ -84,6 +85,7 @@ export interface SimulationTelemetry {
   ncapRunning?: boolean;
   ncapScenario?: EuroNCAPScenarioType;
   ghostBestLapTime?: number;
+  platoon?: PlatoonTelemetry;
 }
 
 export class SimulationEngine {
@@ -116,6 +118,7 @@ export class SimulationEngine {
   public ghostLapManager: GhostLapManager = new GhostLapManager();
   public telemetryHeatmap: TelemetryHeatmap = new TelemetryHeatmap();
   public comfortMetrics: ComfortEnergyMetrics = new ComfortEnergyMetrics();
+  public platoonManager: V2VPlatoonManager = new V2VPlatoonManager();
   public latestComfortStatus: ComfortEnergyStatus = {
     jerkTotal: 0,
     comfortScore: 98,
@@ -184,6 +187,10 @@ export class SimulationEngine {
     const start = this.geneticEngine.getStartPosition();
     this.classicVehicle.reset(start.pos, start.heading);
     this.humanVehicle.reset(start.pos, start.heading);
+
+    if (this.platoonManager.isActive) {
+      this.platoonManager.activatePlatoon(this.track, null, this.platoonManager.members.length || 4);
+    }
   }
 
   public setCustomTrack(track: Track): void {
@@ -198,6 +205,10 @@ export class SimulationEngine {
     const start = this.geneticEngine.getStartPosition();
     this.classicVehicle.reset(start.pos, start.heading);
     this.humanVehicle.reset(start.pos, start.heading);
+
+    if (this.platoonManager.isActive) {
+      this.platoonManager.activatePlatoon(this.track, null, this.platoonManager.members.length || 4);
+    }
   }
 
   public setWeather(mode: WeatherMode): void {
@@ -554,6 +565,11 @@ export class SimulationEngine {
         activeEgo.config.mass || 1500
       );
     }
+
+    // 6. Connected Vehicle-to-Vehicle (V2V) Cooperative Platoon
+    if (this.platoonManager.isActive) {
+      this.platoonManager.update(dt, this.track, this.trafficManager.getVehicles(), obstacles);
+    }
   }
 
   /** Headless hyper-speed batch training (evaluates N generations in pure CPU loop) */
@@ -749,6 +765,7 @@ export class SimulationEngine {
       ncapRunning: this.euroNCAP.isRunning,
       ncapScenario: this.euroNCAP.activeScenario,
       ghostBestLapTime: isFinite(this.ghostLapManager.bestLapTime) ? this.ghostLapManager.bestLapTime : undefined,
+      platoon: this.platoonManager.getTelemetry(),
     };
   }
 

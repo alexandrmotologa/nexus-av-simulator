@@ -32,6 +32,9 @@ export interface RenderOptions {
   heatmapPoints?: HeatmapPoint[];
   ncapVehicle?: VehicleModel | null;
   ncapPedestrian?: PedestrianModel | null;
+  platoonVehicles?: VehicleModel[];
+  platoonActive?: boolean;
+  platoonMembers?: { id: string; role: string; draftPct: number; gapMeters: number }[];
 }
 
 export class CanvasRenderer {
@@ -143,6 +146,16 @@ export class CanvasRenderer {
     // 5. Render NPC Traffic Vehicles
     for (const traffic of trafficVehicles) {
       this.renderVehicle(traffic, false, options.weather);
+    }
+
+    // 5b. Render Connected V2V Platoon Vehicles, Slipstream Wake & Radio Mesh
+    if (options.platoonVehicles && options.platoonVehicles.length > 0) {
+      this.renderPlatoonSlipstream(options.platoonVehicles);
+      for (const pv of options.platoonVehicles) {
+        const isFollowTarget = pv === options.activeFollowVehicle;
+        this.renderVehicle(pv, isFollowTarget, options.weather);
+      }
+      this.renderV2VMesh(options.platoonVehicles, options.platoonMembers);
     }
 
     // 4. Render Ego / AI Autonomous Vehicles
@@ -1081,6 +1094,128 @@ export class CanvasRenderer {
     this.ctx.font = 'bold 0.85px sans-serif';
     this.ctx.textAlign = 'center';
     this.ctx.fillText('BENCHMARK GHOST', 0, 0.3);
+
+    this.ctx.restore();
+  }
+
+  public renderPlatoonSlipstream(vehicles: VehicleModel[]): void {
+    if (vehicles.length < 2) return;
+    this.ctx.save();
+
+    for (let i = 0; i < vehicles.length - 1; i++) {
+      const leader = vehicles[i];
+      const follower = vehicles[i + 1];
+      const dist = leader.state.position.distance(follower.state.position);
+      if (dist > 35.0) continue; // Out of drafting wake
+
+      const heading = leader.state.heading;
+      const uBack = new Vector2D(-Math.cos(heading), -Math.sin(heading));
+      const uSide = new Vector2D(-Math.sin(heading), Math.cos(heading));
+
+      const rearCenter = leader.state.position.add(uBack.scale(leader.config.length * 0.5));
+      const rearLeft = rearCenter.add(uSide.scale(-leader.config.width * 0.45));
+      const rearRight = rearCenter.add(uSide.scale(leader.config.width * 0.45));
+
+      const wakeLen = Math.min(dist, 16.0);
+      const wakeLeft = rearLeft.add(uBack.scale(wakeLen)).add(uSide.scale(-0.4));
+      const wakeRight = rearRight.add(uBack.scale(wakeLen)).add(uSide.scale(0.4));
+
+      // Translucent aerodynamic wake corridor
+      this.ctx.beginPath();
+      this.ctx.moveTo(rearLeft.x, rearLeft.y);
+      this.ctx.lineTo(wakeLeft.x, wakeLeft.y);
+      this.ctx.lineTo(wakeRight.x, wakeRight.y);
+      this.ctx.lineTo(rearRight.x, rearRight.y);
+      this.ctx.closePath();
+
+      const grad = this.ctx.createLinearGradient(rearCenter.x, rearCenter.y, wakeLeft.x, wakeLeft.y);
+      grad.addColorStop(0, 'rgba(6, 182, 212, 0.22)');
+      grad.addColorStop(1, 'rgba(6, 182, 212, 0.01)');
+      this.ctx.fillStyle = grad;
+      this.ctx.fill();
+
+      // Streamline streaks
+      this.ctx.lineWidth = 0.15;
+      this.ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+      this.ctx.setLineDash([1.2, 0.8]);
+      this.ctx.lineDashOffset = -performance.now() * 0.015;
+
+      this.ctx.beginPath();
+      this.ctx.moveTo(rearLeft.x, rearLeft.y);
+      this.ctx.lineTo(wakeLeft.x, wakeLeft.y);
+      this.ctx.stroke();
+
+      this.ctx.beginPath();
+      this.ctx.moveTo(rearRight.x, rearRight.y);
+      this.ctx.lineTo(wakeRight.x, wakeRight.y);
+      this.ctx.stroke();
+    }
+
+    this.ctx.restore();
+  }
+
+  public renderV2VMesh(
+    vehicles: VehicleModel[],
+    members?: { id: string; role: string; draftPct: number; gapMeters: number }[]
+  ): void {
+    if (vehicles.length < 2) return;
+    this.ctx.save();
+
+    const t = performance.now() * 0.003;
+
+    for (let i = 0; i < vehicles.length; i++) {
+      const v = vehicles[i];
+      const memberInfo = members?.[i];
+
+      // Draw Platoon Vehicle Role Badges
+      this.ctx.save();
+      this.ctx.translate(v.state.position.x, v.state.position.y);
+      this.ctx.rotate(v.state.heading);
+
+      this.ctx.font = 'bold 0.85px sans-serif';
+      this.ctx.textAlign = 'center';
+      if (i === 0) {
+        this.ctx.fillStyle = '#38bdf8';
+        this.ctx.fillText('LEADER (C-V2X)', 0, -v.config.width * 0.5 - 0.7);
+      } else {
+        const draftText = memberInfo ? `F${i} -${memberInfo.draftPct}% DRAG` : `FOLLOWER #${i}`;
+        this.ctx.fillStyle = '#34d399';
+        this.ctx.fillText(draftText, 0, -v.config.width * 0.5 - 0.7);
+      }
+      this.ctx.restore();
+
+      // Draw V2V radio mesh communication link between vehicle i and i + 1
+      if (i < vehicles.length - 1) {
+        const nextV = vehicles[i + 1];
+        const p1 = v.state.position;
+        const p2 = nextV.state.position;
+        const dist = p1.distance(p2);
+
+        if (dist < 45.0) {
+          // Wireless link line
+          this.ctx.beginPath();
+          this.ctx.moveTo(p1.x, p1.y);
+          this.ctx.lineTo(p2.x, p2.y);
+          this.ctx.strokeStyle = 'rgba(6, 182, 212, 0.55)';
+          this.ctx.lineWidth = 0.22;
+          this.ctx.setLineDash([0.8, 0.4]);
+          this.ctx.lineDashOffset = -t * 8;
+          this.ctx.stroke();
+
+          // Animated radio packet pulse propagating along the mesh
+          const pulseFraction = (t * 2.5 + i * 0.3) % 1.0;
+          const packetX = p1.x + (p2.x - p1.x) * pulseFraction;
+          const packetY = p1.y + (p2.y - p1.y) * pulseFraction;
+
+          this.ctx.beginPath();
+          this.ctx.arc(packetX, packetY, 0.45, 0, Math.PI * 2);
+          this.ctx.fillStyle = '#38bdf8';
+          this.ctx.shadowColor = '#06b6d4';
+          this.ctx.shadowBlur = 4;
+          this.ctx.fill();
+        }
+      }
+    }
 
     this.ctx.restore();
   }
