@@ -50,11 +50,23 @@ export class SafetyGovernor {
     const frenet = track.frenet.cartesianToFrenet(v.position, v.heading, v.speed);
 
     // 1. Precise Curvature-Compensated Stanley Kinematic Lane Centering (Zero Corner-Cutting)
-    const currentLane = track.getLaneIndex(frenet.d);
-    const targetLane = assignedLaneIndex >= 0 ? assignedLaneIndex : currentLane;
+    let targetLane = assignedLaneIndex;
+    if (targetLane < 0) {
+      let bestLane = 0;
+      let minLaneDist = Infinity;
+      for (let l = 0; l < track.laneCount; l++) {
+        const laneD = track.getLaneCenterD(l);
+        const dist = Math.abs(frenet.d - laneD);
+        if (dist < minLaneDist) {
+          minLaneDist = dist;
+          bestLane = l;
+        }
+      }
+      targetLane = bestLane;
+    }
     const targetLaneD = track.getLaneCenterD(targetLane);
 
-    // Lateral deviation from target lane center (positive = left of center, negative = right of center)
+    // Lateral deviation from target lane center (+d is along track normal, pointing to car's right)
     const lateralOffset = frenet.d - targetLaneD;
 
     // Road tangent, normal and curvature evaluated at vehicle distance s
@@ -69,11 +81,12 @@ export class SafetyGovernor {
 
     // Stanley cross-track error feedback:
     // In canvas coordinates (+y down, clockwise heading increases):
-    // If lateralOffset > 0 (vehicle is to the left of center), positive steer turns right towards center.
-    // If lateralOffset < 0 (vehicle is to the right of center), negative steer turns left towards center.
+    // Track normal points to the RIGHT of forward direction.
+    // If lateralOffset > 0 (vehicle is to the right of center), negative steer turns left towards center.
+    // If lateralOffset < 0 (vehicle is to the left of center), positive steer turns right towards center.
     const kCrossTrack = 0.95;
     const kHeading = 0.85;
-    const crossTrackSteer = Math.atan((kCrossTrack * lateralOffset) / Math.max(1.5, v.speed * 0.85 + 1.2));
+    const crossTrackSteer = -Math.atan((kCrossTrack * lateralOffset) / Math.max(1.5, v.speed * 0.85 + 1.2));
     const headingCorrection = -kHeading * headingError;
 
     const totalGuidanceSteerAngle = curveFeedforward + crossTrackSteer + headingCorrection;
@@ -170,16 +183,16 @@ export class SafetyGovernor {
 
     // Compute dynamic DC-bias rejection:
     // If the driver/AI is steering in the same direction as the existing lateral error
-    // (e.g. car is already drifting right, and AI is asking to steer even further right),
+    // (e.g. car is already drifting right (lateralOffset > 0), and AI is steering right (steer > 0)),
     // progressively filter out the off-center push so the vehicle never settles on a line.
     let aiSteerDamped = rawControl.steer;
     const isPushingFurtherOffCenter =
-      (lateralOffset > 0 && rawControl.steer < -0.05) ||
-      (lateralOffset < 0 && rawControl.steer > 0.05);
+      (lateralOffset > 0 && rawControl.steer > 0.05) ||
+      (lateralOffset < 0 && rawControl.steer < -0.05);
 
     if (isPushingFurtherOffCenter) {
-      const pushSeverity = Math.min(1.0, absOffset / 0.40);
-      aiSteerDamped = rawControl.steer * (1.0 - pushSeverity * 0.75);
+      const pushSeverity = Math.min(1.0, absOffset / 0.35);
+      aiSteerDamped = rawControl.steer * (1.0 - pushSeverity * 0.85);
     }
 
     if (Math.abs(wallRepulseSteer) > 0.1) {
@@ -188,21 +201,21 @@ export class SafetyGovernor {
       finalThrottle *= 0.5; // Ease throttle when making urgent evasive correction
     } else if (isStraddlingDivider && !v.isBlinkingLeft && !v.isBlinkingRight) {
       // Priority 2: Lane Straddling Correction - firmly pull vehicle into center of target lane
-      finalSteer = laneGuidanceSteer * 0.88 + aiSteerDamped * 0.12;
-    } else if (absOffset <= 0.15) {
-      // Zone 1: Human Comfort Sweet Spot (|offset| <= 15cm)
-      // Car is centered naturally. Soft guidance prevents robotic twitching while preserving human feel.
+      finalSteer = laneGuidanceSteer * 0.90 + aiSteerDamped * 0.10;
+    } else if (absOffset <= 0.08) {
+      // Zone 1: Center Deadband sweet spot (|offset| <= 8cm)
+      // Car is centered naturally. Soft guidance prevents micro-jitter.
       finalSteer = laneGuidanceSteer * 0.55 + aiSteerDamped * 0.45;
-    } else if (absOffset <= 0.45) {
-      // Zone 2: Progressive Centering Corridor (15cm to 45cm)
-      // Smooth Hermite ramp from 55% to 80% centering authority
-      const t = (absOffset - 0.15) / 0.30;
-      const smoothAuthority = 0.55 + (0.80 - 0.55) * (t * t * (3 - 2 * t));
+    } else if (absOffset <= 0.35) {
+      // Zone 2: Progressive Centering Corridor (8cm to 35cm)
+      // Smooth Hermite ramp from 55% to 85% centering authority
+      const t = (absOffset - 0.08) / 0.27;
+      const smoothAuthority = 0.55 + (0.85 - 0.55) * (t * t * (3 - 2 * t));
       finalSteer = laneGuidanceSteer * smoothAuthority + aiSteerDamped * (1.0 - smoothAuthority);
     } else {
-      // Zone 3: Line Buffer Zone (|offset| > 45cm)
+      // Zone 3: Line Buffer Zone (|offset| > 35cm)
       // Approaching outer boundaries; high authority smoothly realigns vehicle into corridor
-      finalSteer = laneGuidanceSteer * 0.85 + aiSteerDamped * 0.15;
+      finalSteer = laneGuidanceSteer * 0.92 + aiSteerDamped * 0.08;
     }
 
     // Double Solid Yellow Centerline Protection (prevent crossing into oncoming traffic flow)

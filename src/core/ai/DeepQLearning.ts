@@ -73,6 +73,8 @@ export class DeepQLearningAgent {
   public lastMistakeReason: string = 'None yet - Clean run';
   public lastQValues: number[] = new Array(7).fill(0);
   public lastActionIndex: number = 0;
+  public assignedLaneIndex: number = 1;
+  private smoothedControl: ControlInput = { throttle: 0.35, brake: 0, steer: 0 };
 
   private prevState: Float32Array | null = null;
   private prevAction: number = 0;
@@ -291,9 +293,42 @@ export class DeepQLearningAgent {
       }
     }
 
-    // 4. Select next action and execute safe physics
+    // 4. Select next action and execute smooth control
     const action = this.selectAction(currentState);
     const rawControl = this.actionToControl(action);
+
+    // Exponential smoothing to eliminate 60 Hz discrete action twitching
+    const alphaSteer = 0.32;
+    const alphaLong = 0.30;
+    this.smoothedControl.steer = this.smoothedControl.steer * (1 - alphaSteer) + rawControl.steer * alphaSteer;
+    this.smoothedControl.throttle = this.smoothedControl.throttle * (1 - alphaLong) + rawControl.throttle * alphaLong;
+    this.smoothedControl.brake = this.smoothedControl.brake * (1 - alphaLong) + rawControl.brake * alphaLong;
+
+    // Lane change intent detection & dynamic turn signal blinking
+    const frenet = track.frenet.cartesianToFrenet(v.state.position, v.state.heading, v.state.speed);
+    const targetLaneD = track.getLaneCenterD(this.assignedLaneIndex);
+    const latOffset = frenet.d - targetLaneD;
+
+    if (action === 3 || action === 4) {
+      // Intent: turn left (decrease d / lower lane index)
+      v.state.isBlinkingLeft = true;
+      v.state.isBlinkingRight = false;
+      if (this.assignedLaneIndex > (track.isBidirectional ? track.oncomingLaneCount : 0) && latOffset < -0.5) {
+        this.assignedLaneIndex--;
+      }
+    } else if (action === 5 || action === 6) {
+      // Intent: turn right (increase d / higher lane index)
+      v.state.isBlinkingRight = true;
+      v.state.isBlinkingLeft = false;
+      if (this.assignedLaneIndex < track.laneCount - 1 && latOffset > 0.5) {
+        this.assignedLaneIndex++;
+      }
+    } else if (Math.abs(latOffset) < 0.25) {
+      // Centered in assigned lane: turn signals off
+      v.state.isBlinkingLeft = false;
+      v.state.isBlinkingRight = false;
+    }
+
     const safeControl = this.governor.applySafetyShield(
       v,
       track,
@@ -301,8 +336,9 @@ export class DeepQLearningAgent {
       this.radar,
       traffic,
       obstacles,
-      rawControl,
-      dt
+      this.smoothedControl,
+      dt,
+      this.assignedLaneIndex
     );
     v.step(safeControl, dt);
 
@@ -571,6 +607,10 @@ export class DeepQLearningAgent {
     const middleForwardLane = laneStart + Math.floor(forwardLaneCount / 2);
     const start = track.frenet.frenetToCartesian(10.0, track.getLaneCenterD(middleForwardLane));
     this.vehicle.reset(start.position, start.heading);
+    this.assignedLaneIndex = middleForwardLane;
+    this.smoothedControl = { throttle: 0.35, brake: 0, steer: 0 };
+    this.vehicle.state.isBlinkingLeft = false;
+    this.vehicle.state.isBlinkingRight = false;
     this.prevState = null;
     this.episode++;
     this.currentEpisodeReward = 0;

@@ -322,6 +322,19 @@ export class SimulationEngine {
         activeEgo.state.heading,
         activeEgo.state.speed
       );
+      // Determine nearest forward legal lane center
+      let bestLane = 0;
+      let minLaneDist = Infinity;
+      for (let l = 0; l < this.track.laneCount; l++) {
+        const laneD = this.track.getLaneCenterD(l);
+        const dist = Math.abs(frenet.d - laneD);
+        if (dist < minLaneDist) {
+          minLaneDist = dist;
+          bestLane = l;
+        }
+      }
+      const targetLaneD = this.track.getLaneCenterD(bestLane);
+
       const planRes = this.trajectoryPlanner.plan(
         frenet.s,
         Math.max(1.0, activeEgo.state.speed),
@@ -332,7 +345,8 @@ export class SimulationEngine {
         Math.max(8.0, this.track.getSpeedLimitAtDistance(frenet.s) / 3.6),
         this.track,
         this.obstacleManager.obstacles,
-        this.trafficManager.getVehicles()
+        this.trafficManager.getVehicles(),
+        targetLaneD
       );
       this.latestBestTrajectory = planRes.best;
       this.latestCandidateTrajectories = planRes.candidates;
@@ -459,6 +473,24 @@ export class SimulationEngine {
         if (pad.handbrake) rawBrake = 1.0;
       }
 
+      // Automotive Turn Signal Blinker Discipline (Keys Q/E or automatic upon turning)
+      if (this.keysPressed.has('KeyQ')) {
+        this.humanVehicle.state.isBlinkingLeft = true;
+        this.humanVehicle.state.isBlinkingRight = false;
+      } else if (this.keysPressed.has('KeyE')) {
+        this.humanVehicle.state.isBlinkingRight = true;
+        this.humanVehicle.state.isBlinkingLeft = false;
+      } else if (rawSteer < -0.25) {
+        this.humanVehicle.state.isBlinkingLeft = true;
+        this.humanVehicle.state.isBlinkingRight = false;
+      } else if (rawSteer > 0.25) {
+        this.humanVehicle.state.isBlinkingRight = true;
+        this.humanVehicle.state.isBlinkingLeft = false;
+      } else if (Math.abs(this.humanVehicle.state.steerAngle) < 0.04) {
+        this.humanVehicle.state.isBlinkingLeft = false;
+        this.humanVehicle.state.isBlinkingRight = false;
+      }
+
       this.humanRadar.update(this.humanVehicle, this.track, trafficVehicles);
       this.humanLidar.update(this.humanVehicle, this.track, trafficVehicles, obstacles);
 
@@ -513,6 +545,24 @@ export class SimulationEngine {
         }
       }
     }
+
+    // Universal Rigid-Body SAT Overlap Resolution across all fleets (prevents any vehicle clipping!)
+    const allActiveCars: VehicleModel[] = [activeEgo, ...trafficVehicles];
+    if (this.platoonManager.isActive) {
+      allActiveCars.push(...this.platoonManager.getVehicles());
+    }
+    if (this.pilotMode === 'NEUROEVOLUTION') {
+      for (const a of this.geneticEngine.population) {
+        if (a.isAlive && a.vehicle !== activeEgo) {
+          allActiveCars.push(a.vehicle);
+        }
+      }
+    } else if (this.pilotMode === 'DUEL') {
+      for (const v of this.duelManager.getVehicles()) {
+        if (v !== activeEgo) allActiveCars.push(v);
+      }
+    }
+    this.trafficManager.resolvePhysicalOverlaps(allActiveCars);
 
     // 3. Procedural Audio Engine Update
     if (activeEgo) {

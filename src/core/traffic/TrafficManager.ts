@@ -310,7 +310,7 @@ export class TrafficManager {
    * Enforces physical rigid-body separation so vehicles never overlap or phase through each other.
    * Uses SAT polygon collision to strictly avoid phantom pushes between cars in adjacent lanes!
    */
-  private resolvePhysicalOverlaps(vehicles: VehicleModel[]): void {
+  public resolvePhysicalOverlaps(vehicles: VehicleModel[]): void {
     for (let i = 0; i < vehicles.length; i++) {
       const vA = vehicles[i];
       for (let j = i + 1; j < vehicles.length; j++) {
@@ -329,12 +329,29 @@ export class TrafficManager {
         const dist = Math.sqrt(distSq);
         if (dist > 1e-4) {
           const separationNormal = delta.scale(1 / dist);
-          const push = separationNormal.scale(0.06);
+          const minSeparation = (vA.config.length * 0.45 + vB.config.length * 0.45);
+          const overlap = Math.max(0.25, minSeparation - dist);
+          const push = separationNormal.scale(overlap * 0.65);
 
           vA.state.position = vA.state.position.add(push);
           vB.state.position = vB.state.position.sub(push);
           vA.updatePolygon();
           vB.updatePolygon();
+
+          // Elastic bumper impulse & collision velocity exchange
+          const relVel = vA.state.velocity.sub(vB.state.velocity);
+          const closingSpeed = relVel.dot(separationNormal);
+          if (closingSpeed < 0) {
+            const restitution = 0.35;
+            const impulse = -(1 + restitution) * closingSpeed * 0.5;
+            vA.state.speed += impulse * 0.4;
+            vB.state.speed -= impulse * 0.4;
+          }
+
+          if (Math.abs(closingSpeed) > 4.0 || dist < 2.0) {
+            vA.state.isDamaged = true;
+            vB.state.isDamaged = true;
+          }
         }
       }
     }

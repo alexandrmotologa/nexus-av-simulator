@@ -875,30 +875,44 @@ export class CanvasRenderer {
       this.ctx.fill();
     }
 
-    // 2. Steered Front Wheels
+    // 2. Steered Front Wheels & Fixed Rear Wheels (tucked into wheel wells)
     this.ctx.fillStyle = '#0f172a';
     const wheelL = 0.85;
-    const wheelW = 0.3;
-    const frontAxleX = halfL * 0.65;
-    const rearAxleX = -halfL * 0.65;
+    const wheelW = 0.28;
+    const frontAxleX = halfL * 0.62;
+    const rearAxleX = -halfL * 0.62;
+    const wheelTrackY = halfW * 0.88;
 
-    // Front Left Wheel
+    // Front Left Wheel (-y is left)
     this.ctx.save();
-    this.ctx.translate(frontAxleX, halfW);
+    this.ctx.translate(frontAxleX, -wheelTrackY);
     this.ctx.rotate(v.steerAngle);
     this.ctx.fillRect(-wheelL * 0.5, -wheelW * 0.5, wheelL, wheelW);
+    this.ctx.fillStyle = '#64748b'; // Alloy rim highlight
+    this.ctx.fillRect(-wheelL * 0.2, -wheelW * 0.25, wheelL * 0.4, wheelW * 0.5);
     this.ctx.restore();
 
-    // Front Right Wheel
+    // Front Right Wheel (+y is right)
     this.ctx.save();
-    this.ctx.translate(frontAxleX, -halfW);
+    this.ctx.translate(frontAxleX, wheelTrackY);
     this.ctx.rotate(v.steerAngle);
+    this.ctx.fillStyle = '#0f172a';
     this.ctx.fillRect(-wheelL * 0.5, -wheelW * 0.5, wheelL, wheelW);
+    this.ctx.fillStyle = '#64748b';
+    this.ctx.fillRect(-wheelL * 0.2, -wheelW * 0.25, wheelL * 0.4, wheelW * 0.5);
     this.ctx.restore();
 
-    // Rear Wheels (fixed)
-    this.ctx.fillRect(rearAxleX - wheelL * 0.5, halfW - wheelW * 0.5, wheelL, wheelW);
-    this.ctx.fillRect(rearAxleX - wheelL * 0.5, -halfW - wheelW * 0.5, wheelL, wheelW);
+    // Rear Left Wheel (-y is left)
+    this.ctx.fillStyle = '#0f172a';
+    this.ctx.fillRect(rearAxleX - wheelL * 0.5, -wheelTrackY - wheelW * 0.5, wheelL, wheelW);
+    this.ctx.fillStyle = '#64748b';
+    this.ctx.fillRect(rearAxleX - wheelL * 0.2, -wheelTrackY - wheelW * 0.25, wheelL * 0.4, wheelW * 0.5);
+
+    // Rear Right Wheel (+y is right)
+    this.ctx.fillStyle = '#0f172a';
+    this.ctx.fillRect(rearAxleX - wheelL * 0.5, wheelTrackY - wheelW * 0.5, wheelL, wheelW);
+    this.ctx.fillStyle = '#64748b';
+    this.ctx.fillRect(rearAxleX - wheelL * 0.2, wheelTrackY - wheelW * 0.25, wheelL * 0.4, wheelW * 0.5);
 
     // Procedural Tire Smoke Particles (Emitted strictly during genuine high-slip drift or extreme wheel lockup)
     const isHighAngleDrift = v.isSkidding && Math.abs(v.rearSlipAngle) > 0.48 && v.lateralAcc > 16.5 && v.speed > 10.0;
@@ -910,105 +924,189 @@ export class CanvasRenderer {
       const intensity = (isHighAngleDrift || isSpinout) ? 0.85 : 0.45;
       const cosH = Math.cos(v.heading);
       const sinH = Math.sin(v.heading);
-      const lrX = v.position.x + cosH * rearAxleX - sinH * (halfW * 0.8);
-      const lrY = v.position.y + sinH * rearAxleX + cosH * (halfW * 0.8);
-      const rrX = v.position.x + cosH * rearAxleX - sinH * (-halfW * 0.8);
-      const rrY = v.position.y + sinH * rearAxleX + cosH * (-halfW * 0.8);
+      const lrX = v.position.x + cosH * rearAxleX - sinH * (-wheelTrackY);
+      const lrY = v.position.y + sinH * rearAxleX + cosH * (-wheelTrackY);
+      const rrX = v.position.x + cosH * rearAxleX - sinH * (wheelTrackY);
+      const rrY = v.position.y + sinH * rearAxleX + cosH * (wheelTrackY);
       this.particles.emitSmoke(new Vector2D(lrX, lrY), v.velocity, intensity, weather === 'WET');
       this.particles.emitSmoke(new Vector2D(rrX, rrY), v.velocity, intensity, weather === 'WET');
     }
 
-    // 3. Vehicle Chassis (Aerodynamic Sports Body)
+    // 3. Sleek Sculpted Vehicle Chassis (Aerodynamic Sports Sedan Silhouette)
+    this.ctx.save();
+    const bodyColor = v.isDamaged ? '#475569' : vehicle.config.color;
+
+    // Body contour with sculpted aerodynamic front nose, wheel well recesses, and fastback rear
     this.ctx.beginPath();
-    this.ctx.roundRect(-halfL, -halfW, length, width, [0.8, 1.2, 0.4, 0.4]);
-    this.ctx.fillStyle = v.isDamaged ? '#334155' : vehicle.config.color;
+    // Start at front nose center
+    this.ctx.moveTo(halfL, 0);
+    // Front right curved bumper
+    this.ctx.quadraticCurveTo(halfL, halfW * 0.75, halfL * 0.85, halfW * 0.92);
+    // Right front wheel arch
+    this.ctx.lineTo(frontAxleX + 0.5, halfW * 0.95);
+    this.ctx.lineTo(frontAxleX - 0.5, halfW * 0.95);
+    // Right door sill (subtle waist tuck)
+    this.ctx.lineTo(0, halfW * 0.88);
+    // Right rear wheel arch
+    this.ctx.lineTo(rearAxleX + 0.5, halfW * 0.95);
+    this.ctx.lineTo(rearAxleX - 0.5, halfW * 0.95);
+    // Rear right corner
+    this.ctx.lineTo(-halfL * 0.88, halfW * 0.92);
+    // Rear bumper ducktail
+    this.ctx.quadraticCurveTo(-halfL, halfW * 0.70, -halfL, 0);
+    // Rear left bumper ducktail
+    this.ctx.quadraticCurveTo(-halfL, -halfW * 0.70, -halfL * 0.88, -halfW * 0.92);
+    // Left rear wheel arch
+    this.ctx.lineTo(rearAxleX - 0.5, -halfW * 0.95);
+    this.ctx.lineTo(rearAxleX + 0.5, -halfW * 0.95);
+    // Left door sill
+    this.ctx.lineTo(0, -halfW * 0.88);
+    // Left front wheel arch
+    this.ctx.lineTo(frontAxleX - 0.5, -halfW * 0.95);
+    this.ctx.lineTo(frontAxleX + 0.5, -halfW * 0.95);
+    // Front left curved bumper
+    this.ctx.lineTo(halfL * 0.85, -halfW * 0.92);
+    this.ctx.quadraticCurveTo(halfL, -halfW * 0.75, halfL, 0);
+    this.ctx.closePath();
+
+    // Body metallic shading
+    const bodyGrad = this.ctx.createLinearGradient(0, -halfW, 0, halfW);
+    bodyGrad.addColorStop(0, bodyColor);
+    bodyGrad.addColorStop(0.35, '#ffffff33');
+    bodyGrad.addColorStop(0.65, bodyColor);
+    bodyGrad.addColorStop(1, '#00000033');
+    this.ctx.fillStyle = bodyColor;
+    this.ctx.fill();
+    this.ctx.fillStyle = bodyGrad;
     this.ctx.fill();
 
-    this.ctx.lineWidth = isHighlighted ? 0.35 : 0.18;
+    this.ctx.lineWidth = isHighlighted ? 0.32 : 0.16;
     this.ctx.strokeStyle = isHighlighted ? '#38bdf8' : '#020617';
     this.ctx.stroke();
 
-    // Windshield & Roof
-    this.ctx.beginPath();
-    this.ctx.roundRect(-halfL * 0.35, -halfW * 0.7, length * 0.55, width * 0.7, 0.3);
-    this.ctx.fillStyle = '#0f172a';
-    this.ctx.fill();
+    // Side aerodynamic mirrors
+    this.ctx.fillStyle = bodyColor;
+    const mirrorX = frontAxleX - 0.3;
+    // Left mirror (-y)
+    this.ctx.fillRect(mirrorX, -halfW * 1.08, 0.32, 0.16);
+    // Right mirror (+y)
+    this.ctx.fillRect(mirrorX, halfW * 0.92, 0.32, 0.16);
 
-    // 4. Reactive High-Intensity Brake Lights & Asphalt Light Casting
+    // 4. Cockpit Greenhouse Glass (Curved Windshield, Panoramic Roof, Rear Fastback Glass)
+    const glassGrad = this.ctx.createLinearGradient(halfL * 0.3, 0, -halfL * 0.5, 0);
+    glassGrad.addColorStop(0, '#0f172a');
+    glassGrad.addColorStop(0.4, '#1e293b');
+    glassGrad.addColorStop(1, '#0f172a');
+
+    // Windshield & roof shape
+    this.ctx.beginPath();
+    this.ctx.moveTo(halfL * 0.32, 0);
+    this.ctx.quadraticCurveTo(halfL * 0.30, halfW * 0.62, halfL * 0.15, halfW * 0.65);
+    this.ctx.lineTo(-halfL * 0.38, halfW * 0.62);
+    this.ctx.quadraticCurveTo(-halfL * 0.52, halfW * 0.48, -halfL * 0.52, 0);
+    this.ctx.quadraticCurveTo(-halfL * 0.52, -halfW * 0.48, -halfL * 0.38, -halfW * 0.62);
+    this.ctx.lineTo(halfL * 0.15, -halfW * 0.65);
+    this.ctx.quadraticCurveTo(halfL * 0.30, -halfW * 0.62, halfL * 0.32, 0);
+    this.ctx.closePath();
+    this.ctx.fillStyle = glassGrad;
+    this.ctx.fill();
+    this.ctx.lineWidth = 0.08;
+    this.ctx.strokeStyle = '#334155';
+    this.ctx.stroke();
+
+    // Subtle glass reflection glare streak
+    this.ctx.beginPath();
+    this.ctx.moveTo(halfL * 0.15, -halfW * 0.45);
+    this.ctx.lineTo(-halfL * 0.30, -halfW * 0.20);
+    this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+    this.ctx.lineWidth = 0.14;
+    this.ctx.stroke();
+
+    // 5. Front LED Daytime Running Lights (DRL Blades)
+    if (!v.isDamaged) {
+      this.ctx.fillStyle = '#f8fafc';
+      // Left DRL
+      this.ctx.fillRect(halfL * 0.88, -halfW * 0.82, 0.25, 0.18);
+      // Right DRL
+      this.ctx.fillRect(halfL * 0.88, halfW * 0.64, 0.25, 0.18);
+    }
+
+    // 6. Reactive High-Intensity Brake Lightbar & Asphalt Light Casting
     const isBrakeActive = v.isBraking;
 
     if (isBrakeActive && !v.isDamaged) {
-      // Subtle, realistic red brake light reflection cast onto the asphalt surface
+      // Subtle red brake light reflection cast onto the asphalt surface
       this.ctx.save();
-      const brakeGlow = this.ctx.createRadialGradient(-halfL - 0.2, 0, 0.2, -halfL - 0.9, 0, 1.6);
-      brakeGlow.addColorStop(0, 'rgba(239, 68, 68, 0.32)');
-      brakeGlow.addColorStop(0.6, 'rgba(239, 68, 68, 0.08)');
+      const brakeGlow = this.ctx.createRadialGradient(-halfL - 0.2, 0, 0.2, -halfL - 1.2, 0, 2.0);
+      brakeGlow.addColorStop(0, 'rgba(239, 68, 68, 0.45)');
+      brakeGlow.addColorStop(0.5, 'rgba(239, 68, 68, 0.15)');
       brakeGlow.addColorStop(1, 'rgba(239, 68, 68, 0)');
       this.ctx.fillStyle = brakeGlow;
       this.ctx.beginPath();
-      this.ctx.arc(-halfL - 0.8, 0, 1.6, 0, Math.PI * 2);
+      this.ctx.arc(-halfL - 0.8, 0, 2.0, 0, Math.PI * 2);
       this.ctx.fill();
       this.ctx.restore();
 
-      // Radiant High-Intensity LED Brake Lamps
-      this.ctx.fillStyle = '#ff2222';
-      this.ctx.fillRect(-halfL, -halfW * 0.85, 0.35, 0.45);
-      this.ctx.fillRect(-halfL, halfW * 0.4, 0.35, 0.45);
-
-      // Bright white incandescent bulb core
+      // Full-width radiant LED lightbar
+      this.ctx.fillStyle = '#ff1111';
+      this.ctx.fillRect(-halfL, -halfW * 0.78, 0.28, width * 0.78);
+      // Bright white incandescent core
       this.ctx.fillStyle = '#ffffff';
-      this.ctx.fillRect(-halfL + 0.05, -halfW * 0.75, 0.18, 0.25);
-      this.ctx.fillRect(-halfL + 0.05, halfW * 0.5, 0.18, 0.25);
+      this.ctx.fillRect(-halfL + 0.04, -halfW * 0.55, 0.14, width * 0.55);
     } else {
       // Standard taillights (running lights)
-      this.ctx.fillStyle = v.speed > 0.5 ? '#b91c1c' : '#7f1d1d';
-      this.ctx.fillRect(-halfL, -halfW * 0.8, 0.3, 0.4);
-      this.ctx.fillRect(-halfL, halfW * 0.4, 0.3, 0.4);
+      this.ctx.fillStyle = v.speed > 0.5 ? '#dc2626' : '#991b1b';
+      this.ctx.fillRect(-halfL, -halfW * 0.75, 0.22, width * 0.75);
     }
 
-    // 5. Dynamic Amber Turn Signal Blinkers (1.75 Hz automotive cycle)
-    const blinkCycle = Math.floor(v.blinkTimer * 3.5) % 2 === 0;
+    // 7. Dynamic Amber Turn Signal Blinkers (1.6 Hz automotive cycle)
+    // Left blinkers: -halfW (Left side)
+    // Right blinkers: +halfW (Right side)
+    const blinkCycle = Math.floor(v.blinkTimer * 3.2) % 2 === 0;
 
     if (!v.isDamaged && blinkCycle) {
       this.ctx.save();
-      // Left Turn Signal (Front & Rear)
       if (v.isBlinkingLeft) {
-        // Front Left Blinker
-        this.renderTurnSignalLamp(halfL * 0.88, halfW * 0.9);
-        // Rear Left Blinker
-        this.renderTurnSignalLamp(-halfL * 0.88, halfW * 0.9);
+        // Front Left Blinker (-y is left)
+        this.renderTurnSignalLamp(halfL * 0.85, -halfW * 0.88);
+        // Rear Left Blinker (-y is left)
+        this.renderTurnSignalLamp(-halfL * 0.88, -halfW * 0.85);
       }
 
-      // Right Turn Signal (Front & Rear)
       if (v.isBlinkingRight) {
-        // Front Right Blinker
-        this.renderTurnSignalLamp(halfL * 0.88, -halfW * 0.9);
-        // Rear Right Blinker
-        this.renderTurnSignalLamp(-halfL * 0.88, -halfW * 0.9);
+        // Front Right Blinker (+y is right)
+        this.renderTurnSignalLamp(halfL * 0.85, halfW * 0.88);
+        // Rear Right Blinker (+y is right)
+        this.renderTurnSignalLamp(-halfL * 0.88, halfW * 0.85);
       }
       this.ctx.restore();
     }
 
-
-
+    this.ctx.restore();
     this.ctx.restore();
   }
 
   private renderTurnSignalLamp(x: number, y: number): void {
-    // Luminous amber bloom
-    const glow = this.ctx.createRadialGradient(x, y, 0.05, x, y, 0.85);
-    glow.addColorStop(0, 'rgba(251, 191, 36, 0.9)');
-    glow.addColorStop(0.5, 'rgba(245, 158, 11, 0.4)');
+    // Luminous amber bloom halo
+    const glow = this.ctx.createRadialGradient(x, y, 0.05, x, y, 1.2);
+    glow.addColorStop(0, 'rgba(251, 191, 36, 0.98)');
+    glow.addColorStop(0.35, 'rgba(245, 158, 11, 0.65)');
+    glow.addColorStop(0.75, 'rgba(217, 119, 6, 0.25)');
     glow.addColorStop(1, 'rgba(245, 158, 11, 0)');
     this.ctx.fillStyle = glow;
     this.ctx.beginPath();
-    this.ctx.arc(x, y, 0.85, 0, Math.PI * 2);
+    this.ctx.arc(x, y, 1.2, 0, Math.PI * 2);
     this.ctx.fill();
 
-    // Solid LED diode point
-    this.ctx.fillStyle = '#fef08a';
+    // High-brightness solid LED diode core
+    this.ctx.fillStyle = '#ffffff';
     this.ctx.beginPath();
-    this.ctx.arc(x, y, 0.22, 0, Math.PI * 2);
+    this.ctx.arc(x, y, 0.16, 0, Math.PI * 2);
+    this.ctx.fill();
+
+    this.ctx.fillStyle = '#fde047';
+    this.ctx.beginPath();
+    this.ctx.arc(x, y, 0.28, 0, Math.PI * 2);
     this.ctx.fill();
   }
 

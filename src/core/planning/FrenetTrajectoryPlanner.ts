@@ -52,7 +52,8 @@ export class FrenetTrajectoryPlanner {
     targetSpeed: number,
     track: Track,
     obstacles: RoadObstacle[],
-    traffic: VehicleModel[]
+    traffic: VehicleModel[],
+    preferredTargetD?: number
   ): { best: FrenetTrajectory | null; candidates: FrenetTrajectory[] } {
     const candidateTrajectories: FrenetTrajectory[] = [];
 
@@ -124,10 +125,25 @@ export class FrenetTrajectoryPlanner {
 
           // Square of difference from target speed
           const vDiff = vTarget - targetSpeed;
-          // Square of lateral distance to nearest lane center
+          // Square of lateral distance to target lane center
           const dDiff = dTarget - c_d;
 
-          traj.cd = this.kj * Jd + this.kt * T + this.kd * (dDiff * dDiff);
+          // Traffic discipline: heavily penalize candidate trajectories that target or cross divider lines
+          let dividerStraddleCost = 0;
+          for (let l = 1; l < track.laneCount; l++) {
+            const dividerD = (track.totalWidth * 0.5) - l * track.laneWidth;
+            if (Math.abs(dTarget - dividerD) < 0.6) {
+              dividerStraddleCost += 60.0;
+            }
+          }
+
+          // Preferred lane target alignment bonus/penalty
+          let prefLaneCost = 0;
+          if (preferredTargetD !== undefined) {
+            prefLaneCost = Math.abs(dTarget - preferredTargetD) * 12.0;
+          }
+
+          traj.cd = this.kj * Jd + this.kt * T + this.kd * (dDiff * dDiff) + dividerStraddleCost + prefLaneCost;
           traj.cv = this.kj * Js + this.kt * T + this.kv * (vDiff * vDiff);
           traj.cf = this.klat * traj.cd + this.klon * traj.cv;
 

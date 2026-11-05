@@ -7,13 +7,13 @@ import { PacejkaTireModel } from './PacejkaTireModel';
 export const DEFAULT_VEHICLE_CONFIG: VehicleConfig = {
   id: 'ego-sedan',
   name: 'Nexus Alpha',
-  width: 2.1,
-  length: 4.6,
-  wheelbase: 2.8,
+  width: 1.88,
+  length: 4.7,
+  wheelbase: 2.85,
   maxSpeed: 42.0, // ~150 km/h
   maxReverseSpeed: 10.0, // Full reverse gear capability (~36 km/h)
   maxSteerAngle: 0.58, // ~33 degrees
-  maxSteerRate: 3.5, // rad/s
+  maxSteerRate: 2.8, // rad/s
   acceleration: 6.0, // m/s²
   brakeDecel: 9.5, // m/s²
   dragCoeff: 0.04,
@@ -28,6 +28,8 @@ export class VehicleModel {
   public config: VehicleConfig;
   public tireThermals: TireThermalModel = new TireThermalModel();
   public pacejka: PacejkaTireModel = new PacejkaTireModel();
+  private appliedThrottle: number = 0;
+  private appliedBrake: number = 0;
 
   constructor(
     config: Partial<VehicleConfig> = {},
@@ -62,9 +64,21 @@ export class VehicleModel {
       this.state.steerAngle += Math.sign(steerDiff) * maxSteerDelta;
     }
 
-    // 2. Longitudinal acceleration & braking (with seamless Reverse Gear)
-    const throttle = Math.max(0, Math.min(1, input.throttle));
-    const brake = Math.max(0, Math.min(1, input.brake));
+    // 2. Longitudinal acceleration & braking with smooth progressive actuator response
+    const targetThrottle = Math.max(0, Math.min(1, input.throttle));
+    const targetBrake = Math.max(0, Math.min(1, input.brake));
+
+    // Actuator slew rates (prevents jarring longitudinal twitching)
+    const throttleRate = 5.5; // max units per second
+    const brakeRate = 8.0; // max units per second
+    const throttleDiff = targetThrottle - this.appliedThrottle;
+    const brakeDiff = targetBrake - this.appliedBrake;
+
+    this.appliedThrottle += Math.sign(throttleDiff) * Math.min(Math.abs(throttleDiff), throttleRate * dt);
+    this.appliedBrake += Math.sign(brakeDiff) * Math.min(Math.abs(brakeDiff), brakeRate * dt);
+
+    const throttle = this.appliedThrottle;
+    const brake = this.appliedBrake;
     const dragForce = Math.sign(this.state.speed) * Math.abs(this.state.speed) * this.config.dragCoeff;
 
     this.state.isBraking = brake > 0.08;
@@ -240,6 +254,8 @@ export class VehicleModel {
     this.state.isDamaged = false;
     this.state.isSkidding = false;
     this.state.totalDistance = 0;
+    this.appliedThrottle = 0;
+    this.appliedBrake = 0;
     this.tireThermals.reset();
     this.state.tireTemp = this.tireThermals.temperature;
     this.state.tireStatus = this.tireThermals.getStatus();

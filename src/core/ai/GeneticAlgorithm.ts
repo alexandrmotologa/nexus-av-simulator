@@ -34,6 +34,8 @@ export interface NeuralAgent {
   deadTimer: number;
   assignedLane: number;
   targetLane: number;
+  lastSteer: number;
+  lastThrottle: number;
 }
 
 export class GeneticEngine {
@@ -174,6 +176,8 @@ export class GeneticEngine {
         deadTimer: 0,
         assignedLane: grid.lane,
         targetLane: grid.lane,
+        lastSteer: 0,
+        lastThrottle: 0.35,
       };
 
       this.population.push(agent);
@@ -209,6 +213,8 @@ export class GeneticEngine {
       agent.deadTimer = 0;
       agent.assignedLane = grid.lane;
       agent.targetLane = grid.lane;
+      agent.lastSteer = 0;
+      agent.lastThrottle = 0.35;
       agent.overtakenVehicles.clear();
       agent.stats = {
         distance: 0,
@@ -313,8 +319,14 @@ export class GeneticEngine {
         throttle = 0;
       }
 
-      // outputs[2]: Continuous steering angle (-1 left to +1 right)
-      const steer = Math.max(-1, Math.min(1, outputs[2]));
+      // outputs[2]: Continuous steering angle (-1 left to +1 right) with kinematic low-pass smoothing
+      const rawSteer = Math.max(-1, Math.min(1, outputs[2]));
+      const steer = agent.lastSteer * 0.65 + rawSteer * 0.35;
+      agent.lastSteer = steer;
+
+      const rawThrottle = throttle;
+      throttle = agent.lastThrottle * 0.70 + rawThrottle * 0.30;
+      agent.lastThrottle = throttle;
 
       // 3b. Evaluate Safe Lane Change (Traffic Rules & Non-Chaotic Driving)
       const radarLead = agent.radar.targetDetected ? agent.radar.targetDistance : Infinity;
@@ -342,7 +354,7 @@ export class GeneticEngine {
 
       // Deactivate blinker once settled into the assigned lane
       const currentAssignedD = this.track.getLaneCenterD(agent.assignedLane);
-      if (Math.abs(frenet.d - currentAssignedD) < 0.4) {
+      if (Math.abs(frenet.d - currentAssignedD) < 0.3) {
         v.state.isBlinkingLeft = false;
         v.state.isBlinkingRight = false;
       }
@@ -373,7 +385,7 @@ export class GeneticEngine {
         continue;
       }
 
-      // 5. Physical Vehicle-to-Vehicle Collision Check (SAT polygon / Bumper Touch)
+      // 5a. Physical Vehicle-to-Traffic Collision Check (SAT polygon / Bumper Touch)
       for (const t of trafficVehicles) {
         if (t.state.isDamaged && t.state.speed < 0.1) continue;
         const dist = v.state.position.distance(t.state.position);
@@ -386,6 +398,30 @@ export class GeneticEngine {
             agent.stats.crashes++;
             agent.fitness -= 85.0;
             break;
+          }
+        }
+      }
+
+      // 5b. Physical GA Agent-to-Agent Collision Check (prevents cars passing through each other!)
+      if (agent.isAlive) {
+        for (const otherAgent of this.population) {
+          if (otherAgent === agent) continue;
+          if (!otherAgent.isAlive) continue;
+          const oV = otherAgent.vehicle;
+          const distSq = v.state.position.distanceSq(oV.state.position);
+          if (distSq < 20.0) {
+            const touched = distSq < 13.0 || Collision.checkPolygonCollision(v.state.polygon, oV.state.polygon);
+            if (touched) {
+              v.state.isDamaged = true;
+              oV.state.isDamaged = true;
+              agent.isAlive = false;
+              otherAgent.isAlive = false;
+              agent.stats.crashes++;
+              otherAgent.stats.crashes++;
+              agent.fitness -= 75.0;
+              otherAgent.fitness -= 75.0;
+              break;
+            }
           }
         }
       }
@@ -608,6 +644,8 @@ export class GeneticEngine {
       agent.deadTimer = 0;
       agent.assignedLane = grid.lane;
       agent.targetLane = grid.lane;
+      agent.lastSteer = 0;
+      agent.lastThrottle = 0.35;
       agent.overtakenVehicles.clear();
       agent.stats = {
         distance: 0,

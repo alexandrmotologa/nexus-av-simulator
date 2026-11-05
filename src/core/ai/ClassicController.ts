@@ -102,10 +102,26 @@ export class ClassicController {
     // Curvature feedforward: follows curve without cutting inner chord
     const curveFeedforward = Math.atan(roadState.curvature * ego.config.wheelbase);
 
-    // Cross-track error (positive = left of center, negative = right of center)
+    // Cross-track error (+d is along normal, pointing to vehicle's right side)
     const lateralOffset = frenet.d - targetD;
-    const crossTrackSteer = Math.atan((0.95 * lateralOffset) / Math.max(1.5, ego.state.speed * 0.85 + 1.2));
+    const crossTrackSteer = -Math.atan((0.95 * lateralOffset) / Math.max(1.5, ego.state.speed * 0.85 + 1.2));
     const headingCorrection = -0.85 * headingError;
+
+    // Turn signal discipline: activate blinkers when navigating between lanes
+    if (Math.abs(lateralOffset) > 0.45) {
+      if (lateralOffset > 0) {
+        // Vehicle is to the right of target lane, moving left towards lane
+        ego.state.isBlinkingLeft = true;
+        ego.state.isBlinkingRight = false;
+      } else {
+        // Vehicle is to the left of target lane, moving right towards lane
+        ego.state.isBlinkingRight = true;
+        ego.state.isBlinkingLeft = false;
+      }
+    } else {
+      ego.state.isBlinkingLeft = false;
+      ego.state.isBlinkingRight = false;
+    }
 
     const totalSteerAngle = curveFeedforward + crossTrackSteer + headingCorrection;
     const steer = Math.max(-1.0, Math.min(1.0, totalSteerAngle / ego.config.maxSteerAngle));
