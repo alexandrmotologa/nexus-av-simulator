@@ -17,6 +17,9 @@ import { BlackBoxRecorder, IncidentReport } from './core/telemetry/BlackBoxRecor
 import { SensorFusionEngine } from './core/sensors/SensorFusion';
 import { DuelLeaderboard } from './components/DuelLeaderboard';
 import { TelemetryExporter } from './core/telemetry/TelemetryExporter';
+import { TrackEditor } from './core/world/TrackEditor';
+import { TrackEditorDrawer } from './components/TrackEditorDrawer';
+import { CameraFeedHUD } from './components/CameraFeedHUD';
 import { AlertOctagon } from 'lucide-react';
 
 export function App() {
@@ -76,6 +79,9 @@ export function App() {
   const [isMuted, setIsMuted] = useState<boolean>(true); // Audio engine initialized on user click
   const [activeIncident, setActiveIncident] = useState<IncidentReport | null>(null);
   const [showBlackBoxModal, setShowBlackBoxModal] = useState<boolean>(false);
+  const [isTrackEditorOpen, setIsTrackEditorOpen] = useState<boolean>(false);
+  const trackEditorRef = useRef<TrackEditor>(new TrackEditor());
+  const draggingWaypointRef = useRef<number>(-1);
 
   const handleToggleMute = () => {
     const nextMuted = SoundEngine.getInstance().toggleMute();
@@ -193,13 +199,14 @@ export function App() {
         {
           showLidar,
           showDividers,
-          showWaypoints: false,
+          showWaypoints: isTrackEditorOpen,
           showTrails: true,
           activeFollowVehicle: activeFollow,
           obstacles: engine.obstacleManager.obstacles,
           weather: engine.weather,
           showBoundingBoxes,
           trackedEntities,
+          trafficLights: engine.intersectionManager.lights,
         }
       );
 
@@ -230,16 +237,36 @@ export function App() {
     };
   }, [showLidar, showDividers]);
 
-  // Canvas Mouse Event Handlers for Drag Pan and Click to Follow / Add Obstacle
+  // Canvas Mouse Event Handlers for Drag Pan and Click to Follow / Add Obstacle / Edit Waypoints
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     isMouseDownRef.current = true;
     isDraggingRef.current = false;
     dragStartPosRef.current = { x: e.clientX, y: e.clientY };
     lastMousePosRef.current = { x: e.clientX, y: e.clientY };
+
+    if (isTrackEditorOpen && rendererRef.current && canvasRef.current) {
+      const rect = canvasRef.current.getBoundingClientRect();
+      const screenPos = new Vector2D(e.clientX - rect.left, e.clientY - rect.top);
+      const worldPos = rendererRef.current.camera.screenToWorld(screenPos);
+      const nearWp = trackEditorRef.current.findNearestWaypoint(worldPos, 6.0);
+      if (nearWp !== -1) {
+        trackEditorRef.current.selectedIndex = nearWp;
+        draggingWaypointRef.current = nearWp;
+        setIsCameraLocked(false);
+      }
+    }
   };
 
   const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!isMouseDownRef.current || !rendererRef.current) return;
+
+    if (isTrackEditorOpen && draggingWaypointRef.current !== -1 && canvasRef.current) {
+      const rect = canvasRef.current.getBoundingClientRect();
+      const screenPos = new Vector2D(e.clientX - rect.left, e.clientY - rect.top);
+      const worldPos = rendererRef.current.camera.screenToWorld(screenPos);
+      trackEditorRef.current.moveWaypoint(draggingWaypointRef.current, worldPos);
+      return;
+    }
 
     const dx = e.clientX - lastMousePosRef.current.x;
     const dy = e.clientY - lastMousePosRef.current.y;
@@ -256,6 +283,20 @@ export function App() {
   const handleCanvasMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!isMouseDownRef.current) return;
     isMouseDownRef.current = false;
+
+    if (isTrackEditorOpen) {
+      if (draggingWaypointRef.current !== -1) {
+        draggingWaypointRef.current = -1;
+        return;
+      }
+      if (!isDraggingRef.current && rendererRef.current && canvasRef.current) {
+        const rect = canvasRef.current.getBoundingClientRect();
+        const screenPos = new Vector2D(e.clientX - rect.left, e.clientY - rect.top);
+        const worldPos = rendererRef.current.camera.screenToWorld(screenPos);
+        trackEditorRef.current.addWaypoint(worldPos);
+        return;
+      }
+    }
 
     // If it was a click without significant drag
     if (!isDraggingRef.current && rendererRef.current && engineRef.current && canvasRef.current) {
@@ -299,6 +340,13 @@ export function App() {
         }
       }
     }
+  };
+
+  const handleApplyCustomTrack = () => {
+    if (!engineRef.current) return;
+    const customTrack = trackEditorRef.current.buildTrack(`custom-${Date.now()}`, 'Custom Circuit');
+    engineRef.current.setCustomTrack(customTrack);
+    setSelectedTrackId('custom-circuit');
   };
 
   const handleZoomIn = () => {
@@ -658,6 +706,20 @@ export function App() {
         />
       )}
 
+      {/* Interactive Spline Track Builder Drawer */}
+      <TrackEditorDrawer
+        editor={trackEditorRef.current}
+        isOpen={isTrackEditorOpen}
+        onClose={() => setIsTrackEditorOpen(false)}
+        onApplyTrack={handleApplyCustomTrack}
+      />
+
+      {/* Picture-in-Picture Virtual Front Camera & Real-Time Computer Vision HUD */}
+      <CameraFeedHUD
+        cameraCanvas={engineRef.current?.virtualCamera.getCanvas() || null}
+        visionResult={telemetry.visionResult || null}
+      />
+
       {/* Bottom Mission Control Panel */}
       <footer className="absolute bottom-4 left-4 right-4 z-20 pointer-events-auto">
         <ControlPanel
@@ -665,6 +727,8 @@ export function App() {
           onSetTimeScale={handleSetTimeScale}
           selectedTrackId={selectedTrackId}
           onSelectTrack={handleSelectTrack}
+          isTrackEditorOpen={isTrackEditorOpen}
+          onToggleTrackEditor={() => setIsTrackEditorOpen(!isTrackEditorOpen)}
           trafficDensity={trafficDensity}
           onSetTrafficDensity={handleSetTrafficDensity}
           showLidar={showLidar}

@@ -210,6 +210,11 @@ export class TrafficManager {
           }
 
           for (const candidate of candidateLanes) {
+            // Traffic Rule Enforcement: Strictly forbid lane changes across solid lines, warning lines, or median
+            if (!this.track.isLaneChangeAllowed(agent.currentLaneIndex, candidate, frenet.s)) {
+              continue;
+            }
+
             const candD = this.track.getLaneCenterD(candidate);
             let laneIsClear = true;
 

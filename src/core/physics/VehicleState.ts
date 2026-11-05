@@ -15,6 +15,8 @@ export interface VehicleConfig {
   dragCoeff: number;     // Air/rolling resistance factor
   tireGripCoeff: number; // Lateral adhesion limit before slip/skid
   color: string;
+  mass?: number;         // Vehicle curb weight (kg, default 1500)
+  cgHeight?: number;     // Center of gravity height above ground (m, default 0.52)
 }
 
 export interface ControlInput {
@@ -42,6 +44,10 @@ export class VehicleState {
   public blinkTimer: number = 0;
   public tireTemp: number = 30.0;
   public tireStatus: 'COLD' | 'OPTIMAL' | 'OVERHEATED' = 'COLD';
+  public frontAxleLoad: number = 7650; // Newtons (~52% of 1500kg * 9.81)
+  public rearAxleLoad: number = 7065;  // Newtons (~48% of 1500kg * 9.81)
+  public frontSlipAngle: number = 0;   // Radians (Pacejka alpha_f)
+  public rearSlipAngle: number = 0;    // Radians (Pacejka alpha_r)
 
   constructor(initialPos: Vector2D, initialHeading: number = 0) {
     this.position = initialPos.clone();

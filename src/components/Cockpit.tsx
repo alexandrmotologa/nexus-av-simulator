@@ -124,6 +124,33 @@ export const Cockpit: React.FC<CockpitProps> = ({ telemetry, onSetPilotMode }) =
               </div>
             </div>
           </div>
+
+          {/* Smart Infrastructure V2I Signal Phase & Green Wave Advisory */}
+          {telemetry.v2iPacket &&
+            telemetry.v2iPacket.distanceToStopLine > 0 &&
+            telemetry.v2iPacket.distanceToStopLine < 100 && (
+              <div className="flex items-center gap-1.5 pl-2 border-l border-slate-800" title="V2I Signal Phase & Timing with Green Wave Speed Advisory">
+                <div
+                  className={`w-3.5 h-3.5 rounded-full transition-all ${
+                    telemetry.v2iPacket.phase === 'GREEN'
+                      ? 'bg-emerald-500 shadow-[0_0_8px_#22c55e]'
+                      : telemetry.v2iPacket.phase === 'YELLOW'
+                      ? 'bg-amber-400 shadow-[0_0_8px_#eab308]'
+                      : 'bg-red-500 shadow-[0_0_8px_#ef4444]'
+                  }`}
+                />
+                <div className="hidden sm:block">
+                  <div className="text-[9px] uppercase tracking-wider text-slate-500">
+                    V2I {telemetry.v2iPacket.phase} {telemetry.v2iPacket.remainingTime}s
+                  </div>
+                  <div className="text-[10px] font-bold text-sky-400">
+                    {telemetry.v2iPacket.recommendedSpeed
+                      ? `Wave: ${telemetry.v2iPacket.recommendedSpeed} km/h`
+                      : `${Math.round(telemetry.v2iPacket.distanceToStopLine)}m stop`}
+                  </div>
+                </div>
+              </div>
+            )}
         </div>
 
         {/* Steer Angle */}

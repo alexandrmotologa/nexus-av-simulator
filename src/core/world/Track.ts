@@ -3,11 +3,13 @@ import { CatmullRomSpline } from '../math/Spline';
 import { FrenetConverter } from '../math/Frenet';
 import { RoadSign, RoadSignType } from './RoadSign';
 
-export type LaneDividerType = 'DASHED_WHITE' | 'SOLID_WHITE' | 'DOUBLE_SOLID_YELLOW';
+export type LaneDividerType = 'DASHED_WHITE' | 'SOLID_WHITE' | 'DOUBLE_SOLID_YELLOW' | 'WARNING_DASHED_WHITE';
 
 export interface LaneDividerInfo {
   index: number;
   type: LaneDividerType;
+  sStart: number;
+  sEnd: number;
   points: Vector2D[];
 }
 
@@ -111,20 +113,45 @@ export class Track {
       }
     }
 
-    // Build typed divider details
-    for (let l = 1; l < this.laneCount; l++) {
-      let dividerType: LaneDividerType = 'DASHED_WHITE';
-      if (this.isBidirectional && l === this.oncomingLaneCount) {
-        dividerType = 'DOUBLE_SOLID_YELLOW'; // Center median dividing opposing traffic flows
-      }
-      this.laneDividerDetails.push({
-        index: l - 1,
-        type: dividerType,
-        points: this.laneDividers[l - 1],
-      });
-    }
-
+    // 1. Generate road signs first so marking segments can reference them
     this.generateRoadSigns();
+
+    // 2. Build segmented, dynamic lane divider details strictly synchronized with road signage & curvature
+    this.laneDividerDetails = [];
+    for (let l = 1; l < this.laneCount; l++) {
+      const dividerIdx = l - 1;
+      let currentSeg: LaneDividerInfo | null = null;
+
+      for (let i = 0; i <= numSteps; i++) {
+        const s = (i / numSteps) * length;
+        const pt = this.laneDividers[dividerIdx][i];
+        if (!pt) continue;
+
+        const type = this.getDividerTypeAt(dividerIdx, s);
+
+        if (!currentSeg || currentSeg.type !== type) {
+          if (currentSeg && currentSeg.points.length > 0) {
+            // Include boundary point in previous segment for visually continuous lines
+            currentSeg.points.push(pt);
+            this.laneDividerDetails.push(currentSeg);
+          }
+          currentSeg = {
+            index: dividerIdx,
+            type,
+            sStart: s,
+            sEnd: s,
+            points: [pt],
+          };
+        } else {
+          currentSeg.points.push(pt);
+          currentSeg.sEnd = s;
+        }
+      }
+
+      if (currentSeg && currentSeg.points.length > 0) {
+        this.laneDividerDetails.push(currentSeg);
+      }
+    }
   }
 
   /**
@@ -222,13 +249,85 @@ export class Track {
     return this.isBidirectional && laneIndex < this.oncomingLaneCount;
   }
 
-  /** Gets the divider type between two adjacent lanes */
-  public getDividerTypeBetween(laneA: number, laneB: number): LaneDividerType {
+  /**
+   * Evaluates the legal lane divider marking type at distance s for a specific divider index.
+   * Strictly enforces traffic rules:
+   * - Opposite flow median in bidirectional road -> DOUBLE_SOLID_YELLOW
+   * - Sharp curves (|curvature| > 0.009) or hazard/speed-50 sign zone -> SOLID_WHITE (lane change/overtaking strictly prohibited)
+   * - Approach transition leading into hazard zone (-35m to -5m) -> WARNING_DASHED_WHITE (denser warning dashes)
+   * - Open straight cruise sectors -> DASHED_WHITE (overtaking/lane change allowed)
+   */
+  public getDividerTypeAt(dividerIndex: number, s: number): LaneDividerType {
+    if (this.isBidirectional && (dividerIndex + 1) === this.oncomingLaneCount) {
+      return 'DOUBLE_SOLID_YELLOW';
+    }
+
+    const length = this.spline.totalLength;
+    if (length <= 0) return 'DASHED_WHITE';
+
+    // Sample local path curvature
+    const state = this.spline.evaluateAtDistance(s);
+    const curvature = Math.abs(state.curvature);
+
+    let isHazardZone = curvature > 0.009;
+    let isWarningApproach = false;
+
+    // Check relationship with road signage
+    for (const sign of this.signs) {
+      if (sign.type === 'SHARP_CURVE_LEFT' || sign.type === 'SHARP_CURVE_RIGHT' || sign.type === 'SPEED_LIMIT_50') {
+        let delta = s - sign.s;
+        if (this.closed) {
+          if (delta < -length * 0.5) delta += length;
+          if (delta > length * 0.5) delta -= length;
+        }
+
+        // Active hazard zone: 5m before the warning sign through 55m past it
+        if (delta >= -5.0 && delta <= 55.0) {
+          isHazardZone = true;
+          break;
+        }
+
+        // Approach warning zone: 35m before sign up to 5m before sign
+        if (delta >= -35.0 && delta < -5.0) {
+          isWarningApproach = true;
+        }
+      }
+    }
+
+    if (isHazardZone) {
+      return 'SOLID_WHITE';
+    }
+    if (isWarningApproach) {
+      return 'WARNING_DASHED_WHITE';
+    }
+
+    return 'DASHED_WHITE';
+  }
+
+  /**
+   * Checks whether lane change or overtaking between laneA and laneB is legally permitted at distance s.
+   */
+  public isLaneChangeAllowed(laneFrom: number, laneTo: number, s: number): boolean {
+    if (laneFrom === laneTo) return true;
+    const minLane = Math.min(laneFrom, laneTo);
+    const maxLane = Math.max(laneFrom, laneTo);
+
+    if (maxLane - minLane !== 1) return false;
+
+    if (this.isBidirectional && minLane < this.oncomingLaneCount && maxLane >= this.oncomingLaneCount) {
+      return false; // Opposing traffic median
+    }
+
+    const dividerType = this.getDividerTypeAt(minLane, s);
+    return dividerType === 'DASHED_WHITE';
+  }
+
+  /** Gets the divider type between two adjacent lanes at distance s */
+  public getDividerTypeBetween(laneA: number, laneB: number, s: number = 0): LaneDividerType {
     const minLane = Math.min(laneA, laneB);
     const maxLane = Math.max(laneA, laneB);
     if (maxLane - minLane !== 1) return 'DOUBLE_SOLID_YELLOW';
-    const detail = this.laneDividerDetails[minLane];
-    return detail ? detail.type : 'DASHED_WHITE';
+    return this.getDividerTypeAt(minLane, s);
   }
 
   /** Gets the lateral d coordinate for the center of a given lane index (0 to laneCount-1) */

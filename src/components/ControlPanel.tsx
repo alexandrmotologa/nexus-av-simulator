@@ -25,6 +25,7 @@ import {
   Box,
   FileSpreadsheet,
   FileJson,
+  PenTool,
 } from 'lucide-react';
 
 interface ControlPanelProps {
@@ -32,6 +33,8 @@ interface ControlPanelProps {
   onSetTimeScale: (scale: number) => void;
   selectedTrackId: string;
   onSelectTrack: (trackId: string) => void;
+  isTrackEditorOpen?: boolean;
+  onToggleTrackEditor?: () => void;
   trafficDensity: number;
   onSetTrafficDensity: (count: number) => void;
   showLidar: boolean;
@@ -67,6 +70,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   onSetTimeScale,
   selectedTrackId,
   onSelectTrack,
+  isTrackEditorOpen,
+  onToggleTrackEditor,
   trafficDensity,
   onSetTrafficDensity,
   showLidar,
@@ -159,6 +164,21 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             </option>
           ))}
         </select>
+
+        {onToggleTrackEditor && (
+          <button
+            onClick={onToggleTrackEditor}
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+              isTrackEditorOpen
+                ? 'bg-sky-500/20 text-sky-300 border-sky-500/50 shadow-[0_0_10px_rgba(56,189,248,0.3)]'
+                : 'bg-slate-950 border-slate-800 text-slate-300 hover:text-white'
+            }`}
+            title="Interactive Spline Track Builder & Road Network Editor"
+          >
+            <PenTool className="w-3.5 h-3.5 text-sky-400" />
+            <span className="hidden xl:inline">{isTrackEditorOpen ? 'Close Builder' : 'Track Builder'}</span>
+          </button>
+        )}
       </div>
 
       {/* 3. Weather Atmosphere Modes */}

@@ -13,6 +13,13 @@ import { BlackBoxRecorder, IncidentReport } from '../telemetry/BlackBoxRecorder'
 import { BlindSpotDetector, BlindSpotStatus } from '../sensors/BlindSpotDetector';
 import { DuelManager, DuelContender } from './DuelManager';
 import { CoPilotAdvisor, CoPilotIntervention } from '../control/CoPilotAdvisor';
+import { GamepadController } from '../control/GamepadController';
+import { IntersectionManager } from '../traffic/IntersectionManager';
+import { TrafficLight, V2ISignalingPacket } from '../world/TrafficLight';
+import { VirtualCamera } from '../sensors/VirtualCamera';
+import { VisionProcessor, VisionDetectionResult } from '../sensors/VisionProcessor';
+import { ContinuousActorCritic } from '../ai/ContinuousActorCritic';
+import { ImitationRecorder } from '../ai/ImitationRecorder';
 
 export type PilotMode = 'NEUROEVOLUTION' | 'DEEP_RL_AGENT' | 'CLASSIC_ROBOTICS' | 'HUMAN_DRIVER' | 'DUEL';
 export type WeatherMode = 'DRY' | 'WET' | 'NIGHT' | 'FOG';
@@ -54,6 +61,11 @@ export interface SimulationTelemetry {
   blindSpot: BlindSpotStatus;
   coPilotIntervention?: CoPilotIntervention;
   duelContenders?: DuelContender[];
+  v2iPacket?: V2ISignalingPacket;
+  visionResult?: VisionDetectionResult;
+  gamepadConnected?: boolean;
+  isRecordingDemo?: boolean;
+  demoSamples?: number;
 }
 
 export class SimulationEngine {
@@ -70,6 +82,13 @@ export class SimulationEngine {
   public bsd: BlindSpotDetector = new BlindSpotDetector();
   public duelManager: DuelManager = new DuelManager();
   public coPilot: CoPilotAdvisor = new CoPilotAdvisor();
+  public intersectionManager: IntersectionManager;
+  public virtualCamera: VirtualCamera;
+  public visionProcessor: VisionProcessor;
+  public continuousActorCritic: ContinuousActorCritic;
+  public latestVisionResult: VisionDetectionResult | null = null;
+  public latestV2IPacket: V2ISignalingPacket | null = null;
+  private cameraFrameCounter: number = 0;
 
   public pilotMode: PilotMode = 'NEUROEVOLUTION';
   public timeScale: number = 1.0; // 0 = pause, 1 = normal, 5 = fast
@@ -108,6 +127,10 @@ export class SimulationEngine {
       start.heading
     );
     this.humanLidar = new LidarSensor();
+    this.intersectionManager = new IntersectionManager(this.track);
+    this.virtualCamera = new VirtualCamera(160, 80);
+    this.visionProcessor = new VisionProcessor(160, 80);
+    this.continuousActorCritic = new ContinuousActorCritic(14, 48);
   }
 
   public setTrackPreset(presetId: string): void {
@@ -115,6 +138,20 @@ export class SimulationEngine {
     if (!preset) return;
 
     this.track = preset.createTrack();
+    this.intersectionManager.setTrack(this.track);
+    this.trafficManager.setTrack(this.track);
+    this.trafficManager.spawnFleet(this.trafficCount);
+    this.geneticEngine.setTrack(this.track);
+    this.rlAgent.resetEpisode(this.track);
+
+    const start = this.geneticEngine.getStartPosition();
+    this.classicVehicle.reset(start.pos, start.heading);
+    this.humanVehicle.reset(start.pos, start.heading);
+  }
+
+  public setCustomTrack(track: Track): void {
+    this.track = track;
+    this.intersectionManager.setTrack(track);
     this.trafficManager.setTrack(this.track);
     this.trafficManager.spawnFleet(this.trafficCount);
     this.geneticEngine.setTrack(this.track);
@@ -206,26 +243,47 @@ export class SimulationEngine {
     for (let step = 0; step < subSteps; step++) {
       this.stepPhysics(dt);
     }
+
+    // Process V2I intersections and virtual camera for active lead vehicle
+    const activeEgo = this.getActiveEgoVehicle();
+    this.latestV2IPacket = this.intersectionManager.getClosestV2IPacket(activeEgo);
+
+    this.cameraFrameCounter++;
+    if (this.cameraFrameCounter % 2 === 0) {
+      const frame = this.virtualCamera.render(
+        activeEgo,
+        this.track,
+        this.obstacleManager.obstacles,
+        this.trafficManager.getVehicles(),
+        this.weather
+      );
+      this.latestVisionResult = this.visionProcessor.process(frame.imageData);
+    }
+  }
+
+  public getActiveEgoVehicle(): VehicleModel {
+    if (this.pilotMode === 'NEUROEVOLUTION') {
+      return this.geneticEngine.bestAgent?.vehicle || this.geneticEngine.population[0]?.vehicle || this.humanVehicle;
+    } else if (this.pilotMode === 'DEEP_RL_AGENT') {
+      return this.rlAgent.vehicle;
+    } else if (this.pilotMode === 'CLASSIC_ROBOTICS') {
+      return this.classicVehicle;
+    } else if (this.pilotMode === 'DUEL') {
+      return this.duelManager.contenders[0]?.vehicle || this.rlAgent.vehicle;
+    } else {
+      return this.humanVehicle;
+    }
   }
 
   private stepPhysics(dt: number): void {
     const trafficVehicles = this.trafficManager.getVehicles();
     const obstacles = this.obstacleManager.obstacles;
 
-    // 1. Update Traffic NPCs with knowledge of active ego car & obstacles
-    let activeEgo: VehicleModel | undefined = undefined;
-    if (this.pilotMode === 'NEUROEVOLUTION') {
-      activeEgo = this.geneticEngine.bestAgent?.vehicle;
-    } else if (this.pilotMode === 'DEEP_RL_AGENT') {
-      activeEgo = this.rlAgent.vehicle;
-    } else if (this.pilotMode === 'CLASSIC_ROBOTICS') {
-      activeEgo = this.classicVehicle;
-    } else if (this.pilotMode === 'DUEL') {
-      activeEgo = this.duelManager.contenders[0]?.vehicle || this.rlAgent.vehicle;
-    } else {
-      activeEgo = this.humanVehicle;
-    }
+    // 1. Update Smart Infrastructure (Signalized Intersections)
+    this.intersectionManager.update(dt);
 
+    // 2. Update Traffic NPCs with knowledge of active ego car & obstacles
+    const activeEgo = this.getActiveEgoVehicle();
     this.trafficManager.update(dt, activeEgo, obstacles);
 
     // 2. Update Active Mode
@@ -274,17 +332,25 @@ export class SimulationEngine {
         this.classicController
       );
     } else if (this.pilotMode === 'HUMAN_DRIVER') {
-      // Manual Keyboard Input: W = Accelerate, S = Brake / Reverse, A/D = Steer, R = Reset
-      if (this.keysPressed.has('KeyR')) {
+      // Manual Keyboard or Gamepad Input: W/S/A/D, Arrows, or Gamepad Triggers & Stick
+      const pad = GamepadController.getInstance().poll();
+      if (this.keysPressed.has('KeyR') || (pad && pad.reset)) {
         const start = this.geneticEngine.getStartPosition();
         this.humanVehicle.reset(start.pos, start.heading);
       }
 
-      const rawThrottle = this.keysPressed.has('KeyW') || this.keysPressed.has('ArrowUp') ? 1.0 : 0.0;
-      const rawBrake = this.keysPressed.has('KeyS') || this.keysPressed.has('ArrowDown') ? 1.0 : 0.0;
+      let rawThrottle = this.keysPressed.has('KeyW') || this.keysPressed.has('ArrowUp') ? 1.0 : 0.0;
+      let rawBrake = this.keysPressed.has('KeyS') || this.keysPressed.has('ArrowDown') ? 1.0 : 0.0;
       let rawSteer = 0;
       if (this.keysPressed.has('KeyA') || this.keysPressed.has('ArrowLeft')) rawSteer -= 1.0;
       if (this.keysPressed.has('KeyD') || this.keysPressed.has('ArrowRight')) rawSteer += 1.0;
+
+      if (pad) {
+        if (pad.input.throttle > 0.01) rawThrottle = Math.max(rawThrottle, pad.input.throttle);
+        if (pad.input.brake > 0.01) rawBrake = Math.max(rawBrake, pad.input.brake);
+        if (Math.abs(pad.input.steer) > 0.01) rawSteer = pad.input.steer;
+        if (pad.handbrake) rawBrake = 1.0;
+      }
 
       this.humanRadar.update(this.humanVehicle, this.track, trafficVehicles);
       this.humanLidar.update(this.humanVehicle, this.track, trafficVehicles, obstacles);
@@ -307,6 +373,30 @@ export class SimulationEngine {
 
       this.humanVehicle.step(safeControl, dt);
 
+      // Record high-fidelity human demonstration dataset for Behavioral Cloning
+      if (ImitationRecorder.getInstance().isRecording) {
+        const frenet = this.track.frenet.cartesianToFrenet(
+          this.humanVehicle.state.position,
+          this.humanVehicle.state.heading,
+          this.humanVehicle.state.speed
+        );
+        const splineState = this.track.spline.evaluateAtDistance(frenet.s);
+        const refHeading = Math.atan2(splineState.tangent.y, splineState.tangent.x);
+        let headingErr = this.humanVehicle.state.heading - refHeading;
+        while (headingErr > Math.PI) headingErr -= 2 * Math.PI;
+        while (headingErr < -Math.PI) headingErr += 2 * Math.PI;
+
+        const stateVec = [
+          ...this.humanLidar.getReadings(),
+          this.humanVehicle.state.speed / 45.0,
+          this.humanVehicle.state.steerAngle,
+          this.humanVehicle.state.yawRate,
+          frenet.d / (this.track.totalWidth * 0.5),
+          headingErr,
+        ];
+        ImitationRecorder.getInstance().record(stateVec, [safeControl.steer, safeControl.throttle - safeControl.brake]);
+      }
+
       // Enforce physical barrier collisions
       this.humanVehicle.enforceTrackBoundary(this.track);
 
@@ -325,6 +415,9 @@ export class SimulationEngine {
       const isAEBWarning = v.isBraking && v.speed > 5.0;
       const isOnRumble = this.track.checkRumbleContact(v.position, activeEgo.config.width, isBlinking);
       SoundEngine.getInstance().update(v.speed, v.speed > 0.5 ? 0.7 : 0, isBlinking, blinkPhase, isAEBWarning, isOnRumble);
+      if (isOnRumble) {
+        GamepadController.getInstance().vibrate(0.45, 0.2, 60);
+      }
 
       // 4. Black Box Flight Recorder Telemetry Capture
       BlackBoxRecorder.getInstance().recordFrame({
@@ -344,6 +437,7 @@ export class SimulationEngine {
 
       if (v.isDamaged) {
         BlackBoxRecorder.getInstance().triggerIncident('Kinematic Boundary or Vehicle Impact');
+        GamepadController.getInstance().vibrate(0.85, 1.0, 250);
       }
     }
   }
@@ -527,6 +621,11 @@ export class SimulationEngine {
       blindSpot,
       coPilotIntervention: this.pilotMode === 'HUMAN_DRIVER' ? this.coPilot.lastIntervention : undefined,
       duelContenders: this.pilotMode === 'DUEL' ? [...this.duelManager.contenders] : undefined,
+      v2iPacket: this.latestV2IPacket || undefined,
+      visionResult: this.latestVisionResult || undefined,
+      gamepadConnected: GamepadController.getInstance().isConnected,
+      isRecordingDemo: ImitationRecorder.getInstance().isRecording,
+      demoSamples: ImitationRecorder.getInstance().dataset.length,
     };
   }
 

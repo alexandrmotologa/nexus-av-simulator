@@ -5,6 +5,7 @@ import { LidarSensor } from '../core/sensors/LidarSensor';
 import { Vector2D } from '../core/math/Vector2D';
 import { RoadObstacle } from '../core/world/Obstacle';
 import { RoadSign } from '../core/world/RoadSign';
+import { TrafficLight } from '../core/world/TrafficLight';
 import { ParticleSystem } from './ParticleSystem';
 import { TrackedEntity } from '../core/sensors/SensorFusion';
 
@@ -18,6 +19,7 @@ export interface RenderOptions {
   weather?: 'DRY' | 'WET' | 'NIGHT' | 'FOG';
   showBoundingBoxes?: boolean;
   trackedEntities?: TrackedEntity[];
+  trafficLights?: TrafficLight[];
 }
 
 export class CanvasRenderer {
@@ -387,7 +389,7 @@ export class CanvasRenderer {
     this.renderPolyline(track.leftBoundary);
     this.renderPolyline(track.rightBoundary);
 
-    // C. Realistic Highway & Street Road Markings (Dashed White, Solid White, Double Solid Yellow)
+    // C. Realistic Highway & Street Road Markings (Dashed White, Solid White, Double Solid Yellow, Warning Dashes)
     if (options.showDividers) {
       const details = track.laneDividerDetails.length > 0
         ? track.laneDividerDetails
@@ -406,15 +408,21 @@ export class CanvasRenderer {
           this.ctx.lineWidth = 0.16;
           this.renderPolyline(item.points);
         } else if (item.type === 'SOLID_WHITE') {
-          // Solid White Line (Lane discipline / no overtaking)
+          // Solid White Line (Lane discipline / curve safety / no overtaking strictly enforced)
           this.ctx.setLineDash([]);
-          this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+          this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.88)';
+          this.ctx.lineWidth = 0.28;
+          this.renderPolyline(item.points);
+        } else if (item.type === 'WARNING_DASHED_WHITE') {
+          // Warning Dashed White Line (Denser/longer dashes preceding curve/hazard zone: 4.5m dash, 1.5m gap)
+          this.ctx.setLineDash([4.5, 1.5]);
+          this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
           this.ctx.lineWidth = 0.24;
           this.renderPolyline(item.points);
         } else {
-          // Standard Dashed White Line (Overtaking / lane changes permitted)
+          // Standard Dashed White Line (Overtaking / lane changes permitted on straight cruise)
           this.ctx.setLineDash([3.0, 3.2]);
-          this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+          this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.52)';
           this.ctx.lineWidth = 0.22;
           this.renderPolyline(item.points);
         }
@@ -425,7 +433,10 @@ export class CanvasRenderer {
     // D. Roadside Signage (Speed Limits, Curve Warnings)
     this.renderRoadSigns(track.signs);
 
-    // E. Waypoint handles for track editor
+    // E. V2X Smart Traffic Signals & Intersection Stop Bars
+    this.renderTrafficLights(options.trafficLights || [], track);
+
+    // F. Waypoint handles for track editor
     if (options.showWaypoints) {
       for (const wp of track.spline.getWaypoints()) {
         this.ctx.beginPath();
@@ -520,6 +531,66 @@ export class CanvasRenderer {
     }
   }
 
+  private renderTrafficLights(lights: TrafficLight[], track: Track): void {
+    if (!lights || lights.length === 0) return;
+
+    for (const tl of lights) {
+      // 1. Draw white stop line across asphalt road
+      const leftEdge = track.frenet.frenetToCartesian(tl.stopLineS, track.totalWidth * 0.5);
+      const rightEdge = track.frenet.frenetToCartesian(tl.stopLineS, -track.totalWidth * 0.5);
+
+      this.ctx.beginPath();
+      this.ctx.moveTo(leftEdge.position.x, leftEdge.position.y);
+      this.ctx.lineTo(rightEdge.position.x, rightEdge.position.y);
+      this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+      this.ctx.lineWidth = 0.5;
+      this.ctx.stroke();
+
+      // 2. Traffic Light Housing on Roadside
+      this.ctx.save();
+      this.ctx.translate(tl.position.x, tl.position.y);
+      this.ctx.rotate(tl.heading + Math.PI * 0.5);
+
+      const boxW = 1.3;
+      const boxH = 3.4;
+      this.ctx.fillStyle = '#0f172a';
+      this.ctx.beginPath();
+      this.ctx.roundRect(-boxW * 0.5, -boxH * 0.5, boxW, boxH, 0.25);
+      this.ctx.fill();
+      this.ctx.strokeStyle = '#334155';
+      this.ctx.lineWidth = 0.12;
+      this.ctx.stroke();
+
+      const lampR = 0.35;
+      const redY = -1.0;
+      const yelY = 0.0;
+      const grnY = 1.0;
+
+      // Red Lamp
+      const isRed = tl.phase === 'RED' || tl.phase === 'ALL_RED';
+      this.ctx.beginPath();
+      this.ctx.arc(0, redY, lampR, 0, Math.PI * 2);
+      this.ctx.fillStyle = isRed ? '#ef4444' : '#450a0a';
+      this.ctx.fill();
+
+      // Yellow Lamp
+      const isYellow = tl.phase === 'YELLOW';
+      this.ctx.beginPath();
+      this.ctx.arc(0, yelY, lampR, 0, Math.PI * 2);
+      this.ctx.fillStyle = isYellow ? '#eab308' : '#422006';
+      this.ctx.fill();
+
+      // Green Lamp
+      const isGreen = tl.phase === 'GREEN';
+      this.ctx.beginPath();
+      this.ctx.arc(0, grnY, lampR, 0, Math.PI * 2);
+      this.ctx.fillStyle = isGreen ? '#22c55e' : '#052e16';
+      this.ctx.fill();
+
+      this.ctx.restore();
+    }
+  }
+
   private fogOffset: number = 0;
 
   public renderVehicle(
@@ -604,9 +675,11 @@ export class CanvasRenderer {
     this.ctx.fillRect(rearAxleX - wheelL * 0.5, halfW - wheelW * 0.5, wheelL, wheelW);
     this.ctx.fillRect(rearAxleX - wheelL * 0.5, -halfW - wheelW * 0.5, wheelL, wheelW);
 
-    // Procedural Tire Smoke Particles (Emitted during lateral slip or violent deceleration)
-    if (!v.isDamaged && (v.isSkidding || (v.isBraking && v.speed > 6.0))) {
-      const intensity = v.isSkidding ? 1.0 : 0.6;
+    // Procedural Tire Smoke Particles (Emitted only during authentic high-G lateral skidding or severe emergency lockup braking)
+    const isViolentSkid = v.isSkidding && v.lateralAcc > 11.0 && v.speed > 8.0;
+    const isEmergencyLockup = v.isBraking && v.longitudinalAcc < -7.0 && v.speed > 8.0;
+    if (!v.isDamaged && (isViolentSkid || isEmergencyLockup)) {
+      const intensity = isViolentSkid ? 1.0 : 0.65;
       const cosH = Math.cos(v.heading);
       const sinH = Math.sin(v.heading);
       const lrX = v.position.x + cosH * rearAxleX - sinH * (halfW * 0.8);

@@ -2,6 +2,7 @@ import { Vector2D } from '../math/Vector2D';
 import { VehicleConfig, VehicleState, ControlInput } from './VehicleState';
 import { Track } from '../world/Track';
 import { TireThermalModel } from './TireThermalModel';
+import { PacejkaTireModel } from './PacejkaTireModel';
 
 export const DEFAULT_VEHICLE_CONFIG: VehicleConfig = {
   id: 'ego-sedan',
@@ -18,12 +19,15 @@ export const DEFAULT_VEHICLE_CONFIG: VehicleConfig = {
   dragCoeff: 0.04,
   tireGripCoeff: 8.5, // m/s² max lateral grip (~0.87 G)
   color: '#3b82f6',
+  mass: 1500, // kg
+  cgHeight: 0.52, // m
 };
 
 export class VehicleModel {
   public state: VehicleState;
   public config: VehicleConfig;
   public tireThermals: TireThermalModel = new TireThermalModel();
+  public pacejka: PacejkaTireModel = new PacejkaTireModel();
 
   constructor(
     config: Partial<VehicleConfig> = {},
@@ -97,17 +101,42 @@ export class VehicleModel {
     this.state.longitudinalAcc = netAccel;
     this.state.speed = Math.max(-this.config.maxReverseSpeed, Math.min(this.config.maxSpeed, this.state.speed));
 
-    // 3. Kinematic Bicycle Model equations
+    // 3. Dynamic Weight Transfer & Pacejka Single-Track Kinetics
     const L = this.config.wheelbase;
-    const lr = L * 0.5; // distance from center of mass to rear axle
+    const m = this.config.mass || 1500;
+    const h = this.config.cgHeight || 0.52;
+    const lf = L * 0.48; // Front axle to CG
+    const lr = L * 0.52; // Rear axle to CG
+
+    // Longitudinal load transfer (Newtons)
+    const deltaFz = (m * netAccel * h) / L;
+    const Fzf = Math.max(800, (m * 9.81 * (lr / L)) - deltaFz);
+    const Fzr = Math.max(800, (m * 9.81 * (lf / L)) + deltaFz);
+    this.state.frontAxleLoad = Math.round(Fzf);
+    this.state.rearAxleLoad = Math.round(Fzr);
+
+    // Kinematic Body Slip Angle beta
     const tanSteer = Math.tan(this.state.steerAngle);
-    
-    // Slip angle at center of mass
     const beta = Math.atan((lr / L) * tanSteer);
 
-    // Yaw rate (angular velocity)
+    // Front & Rear Tire Slip Angles (alpha_f and alpha_r)
+    const alphaF = this.state.steerAngle - beta;
+    const alphaR = -beta;
+    this.state.frontSlipAngle = parseFloat(alphaF.toFixed(3));
+    this.state.rearSlipAngle = parseFloat(alphaR.toFixed(3));
+
+    // Dynamic Pacejka Lateral Forces
+    const thermalMultiplier = this.tireThermals.getGripMultiplier();
+    const Fyf = this.pacejka.calculateLateralForce(alphaF, Fzf, thermalMultiplier);
+    const Fyr = this.pacejka.calculateLateralForce(alphaR, Fzr, thermalMultiplier);
+
+    // Yaw rate (angular velocity) with dynamic tire force response
     if (Math.abs(this.state.speed) > 0.01) {
-      this.state.yawRate = (this.state.speed / L) * Math.cos(beta) * tanSteer;
+      const kinematicYaw = (this.state.speed / L) * Math.cos(beta) * tanSteer;
+      // Slight oversteer/understeer yaw torque contribution from Pacejka axle imbalance
+      const torqueImbalance = (lf * Fyf * Math.cos(this.state.steerAngle) - lr * Fyr) / (m * lf * lr);
+      const dynamicYawFactor = Math.abs(this.state.speed) > 5.0 ? 0.06 : 0.0;
+      this.state.yawRate = kinematicYaw + torqueImbalance * dynamicYawFactor;
     } else {
       this.state.yawRate = 0;
     }
@@ -133,8 +162,9 @@ export class VehicleModel {
     this.state.tireTemp = parseFloat(this.tireThermals.temperature.toFixed(1));
     this.state.tireStatus = this.tireThermals.getStatus();
 
-    const dynamicGrip = this.config.tireGripCoeff * this.tireThermals.getGripMultiplier();
-    this.state.isSkidding = this.state.lateralAcc > dynamicGrip;
+    const dynamicGrip = this.config.tireGripCoeff * thermalMultiplier;
+    // Skidding triggers only if lateral G-force exceeds dynamic grip limit (> 1.15 G) or tire slip angle saturates violently (> 18 degrees)
+    this.state.isSkidding = lateralG > dynamicGrip * 1.15 || Math.abs(alphaR) > 0.32;
 
     // 5. Update boundary polygon for collisions and rendering
     this.updatePolygon();

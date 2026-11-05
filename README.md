@@ -34,6 +34,16 @@ The simulator implements numerical vehicle dynamics, geometric collision checks 
 ## Visual Previews
 
 <div align="center">
+  <img src="docs/images/nexus_av_front_camera.png" alt="Synthetic Computer Vision HUD" width="800" />
+  <p><i>Synthetic Computer Vision HUD: Forward driver perspective with discrete 2D Sobel edge detection, lane boundary lock, obstacle bounding boxes with distance tags, and sign-synchronized road markings.</i></p>
+</div>
+
+<div align="center">
+  <img src="docs/images/nexus_av_track_builder.png" alt="Interactive Spline Track Builder" width="800" />
+  <p><i>Interactive Track Builder: Real-time road network editor supporting arbitrary waypoint placement, curve curvature tuning, lane counts (2 to 6), bidirectional traffic flows, and JSON storage.</i></p>
+</div>
+
+<div align="center">
   <img src="docs/images/nexus_av_tri_duel.png" alt="Grand Prix Tri-Duel Mode" width="800" />
   <p><i>Grand Prix Tri-Duel: Deep RL, NeuroBot GA, and Stanley Robot racing concurrently with live championship leaderboard.</i></p>
 </div>
@@ -67,22 +77,48 @@ The simulator implements numerical vehicle dynamics, geometric collision checks 
 
 ## Core Systems
 
-### 1. Vehicle Dynamics Engine
-The simulator models vehicle mechanics through a continuous-time Kinematic Bicycle Model with Ackermann geometry:
-* **Position and Heading**: Updated via Runge-Kutta numerical integration.
+### 1. Vehicle Dynamics Engine & Pacejka Tire Model
+The simulator models vehicle mechanics through a continuous-time single-track model with dynamic load transfer and non-linear tire mechanics:
+* **Position and Heading**: Updated via numerical integration.
+* **Dynamic Weight Transfer**: Calculates longitudinal axle load shifts during braking and acceleration:
+  $$\Delta F_z = \frac{m \cdot a_x \cdot h_{\text{cg}}}{L}, \quad F_{zf} = F_{zf0} - \Delta F_z, \quad F_{zr} = F_{zr0} + \Delta F_z$$
+* **Pacejka Magic Formula**: Evaluates non-linear lateral tire forces based on tire slip angles ($\alpha_f, \alpha_r$):
+  $$F_y = D \sin\left(C \arctan(B\alpha - E(B\alpha - \arctan(B\alpha)))\right)$$
 * **Slip Angle**: Computed using front/rear wheel base distances ($l_f = 1.3\text{ m}$, $l_r = 1.5\text{ m}$):
   $$\beta = \arctan\left(\frac{l_r}{l_f + l_r} \tan(\delta)\right)$$
-* **Lateral Grip**: Clamped by friction limits ($a_{\text{lat}} = v^2 \cdot \kappa \le \mu g$).
 * **Transmission**: Forward acceleration up to 160 km/h and dedicated reverse gear up to 50 km/h with directional braking transition.
 
-### 2. 360-Degree Sensor Suite
+### 2. Road Signage and Synchronized Road Markings
+Road markings are strictly coupled with road signage and curvature:
+* **Hazard & Sharp Curve Zones**: Lane dividers transition into continuous solid white lines (`SOLID_WHITE`), legally prohibiting lane changes and overtaking.
+* **Approach Transition**: Preceded by warning dashed lines (`WARNING_DASHED_WHITE`, 4.5m dash, 1.5m gap) alerting drivers of upcoming restrictions.
+* **Straight Cruise Sectors**: Standard dashed white lines (`DASHED_WHITE`, 3.0m dash, 3.2m gap) where overtaking is permitted.
+* **Opposing Traffic Median**: Prominent double solid yellow line (`DOUBLE_SOLID_YELLOW`) in bidirectional circuits.
+
+### 3. Synthetic Computer Vision & Virtual Front Camera
+* **Driver Perspective Projection**: Projects a 72-degree field of view forward frustum from the front bumper onto a 160x80 canvas.
+* **Discrete 2D Edge Detection**: Computes horizontal and vertical Sobel convolution kernels ($G_x, G_y$) to extract gradient magnitude maps.
+* **Feature Extraction**: Scans road region of interest (ROI) to detect lane boundary offsets and cluster obstacle bounding boxes with distance tags.
+
+### 4. Smart Infrastructure & V2X Signalized Intersections
+* **4-Phase Traffic Signals**: Red, Yellow, Green, and All-Red clearance cycles with induction loops.
+* **V2I Telemetry Beacons**: Broadcasts Signal Phase and Timing (SPaT) data to approaching connected vehicles.
+* **Green Wave Speed Advisory**: Computes optimal approach velocity to clear upcoming intersections on green without stopping.
+
+### 5. Continuous Actor-Critic & Behavioral Cloning
+* **Dual-Head Architecture**: Actor outputs continuous mean steering $\mu_\delta \in [-1, 1]$ and throttle $\mu_a \in [-1, 1]$ with Gaussian standard deviations; Critic estimates baseline state value $V(s)$.
+* **Generalized Advantage Estimation (GAE)**: Updates continuous policy gradients with advantage normalization.
+* **Behavioral Cloning Recorder**: Records human driving trajectories and pre-trains Actor weights via supervised gradient descent.
+
+### 6. 360-Degree Sensor Suite
 * **LiDAR Sensor**: Casts up to 24 planar rays across 360 degrees. Ray intersections are evaluated against track boundaries, NPC traffic hulls, and road obstacles using optimized ray-circle and ray-segment tests.
 * **Doppler Radar**: Forward long-range sensor tracking distance, azimuth, and relative approach velocity ($\Delta v$) of leading obstacles up to 70 meters.
 
-### 3. Multi-Agent Intelligent Traffic
+### 7. Multi-Agent Intelligent Traffic
 Surrounding civilian traffic operates autonomously through coupled macroscopic and microscopic models:
 * **IDM (Intelligent Driver Model)**: Calculates longitudinal acceleration based on desired velocity, safe time headway, and minimum spacing.
 * **MOBIL (Minimizing Overall Braking Induced by Lane Changes)**: Evaluates politeness factors and acceleration incentives before executing lane shifts.
+* **Road Rule Compliance**: NPC vehicles strictly check `isLaneChangeAllowed(laneFrom, laneTo, s)` and never change lanes across solid lines or in curves.
 * **Active Hazard Avoidance**: Traffic vehicles detect stopped wrecks and road cones, calculating lane offsets to bypass obstructions safely.
 * **Turn Signals and Brake Halos**: Vehicles engage 1.75 Hz amber turn signal indicators during lane shifts and cast diffuse red brake light reflections onto the road surface during deceleration.
 
