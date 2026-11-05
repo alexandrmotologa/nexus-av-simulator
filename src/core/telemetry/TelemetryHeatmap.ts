@@ -6,6 +6,7 @@ export interface HeatmapPoint {
   longitudinalAcc: number; // m/s²
   speed: number;
   color: string;
+  isBreak?: boolean;
 }
 
 export class TelemetryHeatmap {
@@ -24,10 +25,16 @@ export class TelemetryHeatmap {
   ): void {
     if (speed < 0.5) return; // Skip stationary idle points
 
+    let isBreak = false;
     if (this.points.length > 0) {
       const last = this.points[this.points.length - 1];
-      if (last.position.distanceSq(pos) < this.minDistanceSq) {
+      const dSq = last.position.distanceSq(pos);
+      if (dSq < this.minDistanceSq) {
         return;
+      }
+      if (dSq > 16.0) {
+        // Discontinuity detected: car teleported, reset on crash, or camera switched agents
+        isBreak = true;
       }
     }
 
@@ -45,6 +52,7 @@ export class TelemetryHeatmap {
       longitudinalAcc,
       speed,
       color,
+      isBreak,
     });
 
     if (this.points.length > this.maxPoints) {

@@ -100,7 +100,7 @@ export class GeneticEngine {
     this.resetAllAgents();
   }
 
-  private createDefaultBrain(): NeuralNetwork {
+  private createDefaultBrain(withFoundation: boolean = true): NeuralNetwork {
     const net = new NeuralNetwork();
     // Inputs: 20 LiDAR rays (360° omnidirectional) + speed + steer + lane offset + rear threat + speed limit ratio + curvature ahead = 26 inputs
     // Hidden 1: 20 neurons (ReLU)
@@ -109,6 +109,9 @@ export class GeneticEngine {
     net.addLayer(26, 20, 'relu');
     net.addLayer(20, 14, 'tanh');
     net.addLayer(14, 3, 'tanh');
+    if (withFoundation) {
+      net.initializeFoundationDriver();
+    }
     return net;
   }
 
@@ -131,6 +134,7 @@ export class GeneticEngine {
 
   public initPopulation(): void {
     this.population = [];
+    const championLoaded = this.loadChampionFromStorage();
 
     for (let i = 0; i < this.populationSize; i++) {
       const grid = this.getGridStartPosition(i);
@@ -153,10 +157,22 @@ export class GeneticEngine {
       );
       vehicle.state.speed = 10.0; // rolling start (~36 km/h)
 
+      let brain: NeuralNetwork;
+      if (i === 0 && championLoaded && this.bestBrainEver) {
+        brain = this.bestBrainEver.clone();
+      } else if (i < 3) {
+        // Pure foundation driver with lane centering and speed limit priors
+        brain = this.createDefaultBrain(true);
+      } else {
+        // Diversified population seeded from foundation driver with gentle mutations
+        brain = this.createDefaultBrain(true);
+        brain.mutate(0.12, 0.25);
+      }
+
       const agent: NeuralAgent = {
         id: `agent-${i}`,
         vehicle,
-        brain: this.createDefaultBrain(),
+        brain,
         sensor: new LidarSensor({ rayCount: 20, maxRange: 50.0 }),
         radar: new RadarSensor(60.0),
         fitness: 0,
@@ -617,16 +633,19 @@ export class GeneticEngine {
       nextBrains.push(child);
     }
 
-    // 3. Fresh random brains injection
+    // 3. Fresh foundation brains injection (maintains road discipline while adding diversity)
     for (let i = 0; i < randomCount; i++) {
-      nextBrains.push(this.createDefaultBrain());
+      const fresh = this.createDefaultBrain(true);
+      fresh.mutate(0.18, 0.35);
+      fresh.generation = this.generation;
+      nextBrains.push(fresh);
     }
 
     // Apply new brains and reset vehicles on staggered grid boxes
     for (let i = 0; i < this.population.length; i++) {
       const agent = this.population[i];
       const grid = this.getGridStartPosition(i);
-      agent.brain = nextBrains[i] || this.createDefaultBrain();
+      agent.brain = nextBrains[i] || this.createDefaultBrain(true);
       agent.vehicle.reset(grid.pos, grid.heading);
       agent.vehicle.state.speed = 10.0; // rolling start
       agent.vehicle.config.color =

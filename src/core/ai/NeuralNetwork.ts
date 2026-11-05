@@ -167,6 +167,59 @@ export class NeuralNetwork {
     return copy;
   }
 
+  /**
+   * Initializes foundation driver behavioral weights with traffic rule discipline:
+   * 1. Centering in lane (counter-steers away from lateral offsets)
+   * 2. Curvature anticipation (steers into forward road arcs)
+   * 3. Speed limit cruise compliance (throttles up to legal limit, brakes when exceeding)
+   * 4. Obstacle emergency braking
+   */
+  public initializeFoundationDriver(): void {
+    if (this.layers.length < 3) return;
+    const l0 = this.layers[0]; // 26 -> 20
+    const l1 = this.layers[1]; // 20 -> 14
+    const l2 = this.layers[2]; // 14 -> 3
+
+    l0.weights.fill(0);
+    l0.biases.fill(0);
+    l1.weights.fill(0);
+    l1.biases.fill(0);
+    l2.weights.fill(0);
+    l2.biases.fill(0);
+
+    // Layer 0: 26 inputs -> 20 outputs ReLU
+    l0.weights[0 * 26 + 25] = 1.0;  // Neuron 0: Positive curvature ahead
+    l0.weights[1 * 26 + 25] = -1.0; // Neuron 1: Negative curvature ahead
+    l0.weights[2 * 26 + 22] = 1.0;  // Neuron 2: Positive lateral offset (right of center)
+    l0.weights[3 * 26 + 22] = -1.0; // Neuron 3: Negative lateral offset (left of center)
+    l0.weights[4 * 26 + 24] = 1.0;  // Neuron 4: Speed limit ratio
+    l0.weights[5 * 26 + 0] = -2.0;  // Neuron 5: Front LiDAR proximity
+    l0.biases[5] = 0.9;
+
+    // Layer 1: 20 inputs -> 14 outputs Tanh
+    l1.weights[0 * 20 + 0] = 1.0;
+    l1.weights[0 * 20 + 1] = -1.0; // Neuron 0: Net curvature
+    l1.weights[1 * 20 + 2] = 1.0;
+    l1.weights[1 * 20 + 3] = -1.0; // Neuron 1: Net lateral offset
+    l1.weights[2 * 20 + 4] = -1.2;
+    l1.biases[2] = 1.1;            // Neuron 2: Speed headroom
+    l1.weights[3 * 20 + 5] = 1.5;  // Neuron 3: Obstacle threat
+
+    // Layer 2: 14 inputs -> 3 outputs Tanh
+    // Output 0: Throttle / Brake
+    l2.weights[0 * 14 + 2] = 0.85;
+    l2.weights[0 * 14 + 3] = -1.8;
+    l2.biases[0] = 0.25;
+
+    // Output 1: Emergency Brake
+    l2.weights[1 * 14 + 3] = 2.0;
+    l2.biases[1] = -0.5;
+
+    // Output 2: Continuous Steering Angle (-1 left, +1 right)
+    l2.weights[2 * 14 + 0] = 0.75;  // Steer into curve
+    l2.weights[2 * 14 + 1] = -0.95; // Counter-steer to center in lane (turn LEFT when offset is RIGHT)
+  }
+
   public mutate(rate: number = 0.15, strength: number = 0.3): void {
     for (const layer of this.layers) {
       layer.mutate(rate, strength);

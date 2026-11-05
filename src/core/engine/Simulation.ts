@@ -127,6 +127,7 @@ export class SimulationEngine {
     regenPowerKw: 0,
   };
   private cameraFrameCounter: number = 0;
+  private lastActiveEgoId: string = '';
 
   public pilotMode: PilotMode = 'NEUROEVOLUTION';
   public timeScale: number = 1.0; // 0 = pause, 1 = normal, 5 = fast
@@ -176,6 +177,7 @@ export class SimulationEngine {
     const preset = TRACK_PRESETS.find((p) => p.id === presetId);
     if (!preset) return;
 
+    this.telemetryHeatmap.clear();
     this.track = preset.createTrack();
     this.intersectionManager.setTrack(this.track);
     this.pedestrianManager.setTrack(this.track);
@@ -194,6 +196,7 @@ export class SimulationEngine {
   }
 
   public setCustomTrack(track: Track): void {
+    this.telemetryHeatmap.clear();
     this.track = track;
     this.intersectionManager.setTrack(track);
     this.pedestrianManager.setTrack(this.track);
@@ -253,6 +256,7 @@ export class SimulationEngine {
 
   public setPilotMode(mode: PilotMode): void {
     this.pilotMode = mode;
+    this.telemetryHeatmap.clear();
     const start = this.geneticEngine.getStartPosition();
     if (mode === 'CLASSIC_ROBOTICS') {
       this.classicVehicle.reset(start.pos, start.heading);
@@ -402,6 +406,7 @@ export class SimulationEngine {
       // Record fitness history when new generation starts
       if (this.geneticEngine.generation > this.lastRecordedGen) {
         this.lastRecordedGen = this.geneticEngine.generation;
+        this.telemetryHeatmap.clear();
         const bestSpeed = this.geneticEngine.bestAgent ? this.geneticEngine.bestAgent.vehicle.state.speed * 3.6 : 0;
         this.fitnessHistory.push({
           gen: this.geneticEngine.generation - 1,
@@ -566,6 +571,10 @@ export class SimulationEngine {
 
     // 3. Procedural Audio Engine Update
     if (activeEgo) {
+      if (this.lastActiveEgoId !== activeEgo.config.id) {
+        this.lastActiveEgoId = activeEgo.config.id;
+        this.telemetryHeatmap.clear();
+      }
       const v = activeEgo.state;
       const isBlinking = v.isBlinkingLeft || v.isBlinkingRight;
       const blinkPhase = Math.floor(v.blinkTimer * 3.5) % 2 === 0;

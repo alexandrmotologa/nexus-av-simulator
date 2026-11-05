@@ -751,7 +751,7 @@ export function App() {
 
       {/* Floating Black Box Incident Banner */}
       {activeIncident && !showBlackBoxModal && (
-        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-30 pointer-events-auto">
+        <div className="absolute top-[72px] left-1/2 -translate-x-1/2 z-30 pointer-events-auto">
           <button
             onClick={() => setShowBlackBoxModal(true)}
             className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-red-600/95 hover:bg-red-500 text-white font-mono text-xs font-bold shadow-2xl shadow-red-950/60 border border-red-400 animate-pulse transition-all"

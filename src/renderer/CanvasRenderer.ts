@@ -1154,6 +1154,9 @@ export class CanvasRenderer {
     for (let i = 0; i < points.length - 1; i++) {
       const p1 = points[i];
       const p2 = points[i + 1];
+      if (p2.isBreak || p1.position.distanceSq(p2.position) > 16.0) {
+        continue; // Never draw continuous lines across resets, teleports, or agent switches
+      }
       this.ctx.strokeStyle = p1.color;
       this.ctx.beginPath();
       this.ctx.moveTo(p1.position.x, p1.position.y);
